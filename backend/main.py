@@ -4,9 +4,8 @@ from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-# ✅ Import corregido (sin "backend." porque ejecutamos desde la carpeta backend/)
-from services.garmin_service import GarminService
-
+# ✅ Import correcto para Render
+from backend.services.garmin_service import GarminService
 app = FastAPI(
     title="SpeedSkate AI Coach Backend",
     version="0.1.0",
