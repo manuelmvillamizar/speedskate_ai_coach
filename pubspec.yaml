@@ -1,0 +1,46 @@
+name: speedskate_ai_coach
+
+description: "AI Olympic Speed Skating Coaching Platform"
+
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.8
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+  provider: ^6.1.5+1
+  fl_chart: ^1.2.0
+  video_player: ^2.11.1
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  shared_preferences: ^2.5.5
+  pdf: ^3.11.1
+  printing: ^5.13.4
+  health: ^13.3.1
+  http: ^1.1.0
+  flutter_secure_storage: ^9.2.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^6.0.0
+  hive_generator: ^2.0.1
+  build_runner: ^2.4.13
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/images/exercises/
+    - assets/images/strength/cuts/
+    - assets/gifs/exercises/
+    - assets/videos/exercises/
+    - assets/data/garmin_latest_training.json
+    - assets/data/garmin/

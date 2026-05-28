@@ -1,0 +1,230 @@
+import 'dart:convert';
+
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'athlete_program_service.dart';
+import 'fatigue_engine.dart';
+import 'training_history_service.dart';
+import 'wearable_integration_service.dart';
+
+class AthleteContextService extends ChangeNotifier {
+  static const String _storageKey = 'speedskate_athlete_context_storage_v1';
+
+  AthleteProgramProfile? _activeAthlete;
+
+  final Map<String, List<TrainingHistoryEntry>> _historyByAthlete = {};
+  final Map<String, WearableDailyData> _wearableByAthlete = {};
+  final Map<String, String> _fatigueByAthlete = {};
+  final Map<String, int> _readinessByAthlete = {};
+
+  bool _loaded = false;
+
+  bool get loaded => _loaded;
+
+  AthleteProgramProfile? get activeAthlete => _activeAthlete;
+
+  String? get activeAthleteId => _activeAthlete?.id;
+
+  bool get hasActiveAthlete => _activeAthlete != null;
+
+  List<TrainingHistoryEntry> get activeHistory {
+    final id = activeAthleteId;
+    if (id == null) return [];
+    return List.unmodifiable(_historyByAthlete[id] ?? []);
+  }
+
+  WearableDailyData? get activeWearable {
+    final id = activeAthleteId;
+    if (id == null) return null;
+    return _wearableByAthlete[id];
+  }
+
+  String get activeFatigueStatus {
+    final id = activeAthleteId;
+    if (id == null) return 'green';
+    return _fatigueByAthlete[id] ?? 'green';
+  }
+
+  int get activeReadinessScore {
+    final id = activeAthleteId;
+    if (id == null) return 100;
+    return _readinessByAthlete[id] ?? 100;
+  }
+
+  Future<void> initialize() async {
+    if (_loaded) return;
+
+    await _load();
+
+    _loaded = true;
+    notifyListeners();
+  }
+
+  void setActiveAthlete(AthleteProgramProfile athlete) {
+    _activeAthlete = athlete;
+
+    _historyByAthlete.putIfAbsent(athlete.id, () => []);
+    _fatigueByAthlete.putIfAbsent(athlete.id, () => 'green');
+    _readinessByAthlete.putIfAbsent(athlete.id, () => 100);
+
+    _save();
+
+    notifyListeners();
+  }
+
+  void clearActiveAthlete() {
+    _activeAthlete = null;
+
+    _save();
+
+    notifyListeners();
+  }
+
+  void addTrainingEntry(TrainingHistoryEntry entry) {
+    final athlete = _activeAthlete;
+    if (athlete == null) return;
+
+    _historyByAthlete.putIfAbsent(athlete.id, () => []);
+    _historyByAthlete[athlete.id]!.add(entry);
+
+    _recalculateFatigueForAthlete(athlete.id);
+
+    _save();
+
+    notifyListeners();
+  }
+
+  void setWearableData(WearableDailyData data) {
+    final athlete = _activeAthlete;
+    if (athlete == null) return;
+
+    _wearableByAthlete[athlete.id] = data;
+
+    _recalculateFatigueForAthlete(athlete.id);
+
+    _save();
+
+    notifyListeners();
+  }
+
+  void syncFromExistingServices({
+    required AthleteProgramService athleteProgramService,
+    required TrainingHistoryService trainingHistoryService,
+    required WearableIntegrationService wearableIntegrationService,
+  }) {
+    final athlete = athleteProgramService.activeAthlete;
+
+    if (athlete == null) return;
+
+    _activeAthlete = athlete;
+
+    _historyByAthlete[athlete.id] = List<TrainingHistoryEntry>.from(
+      trainingHistoryService.entries,
+    );
+
+    if (wearableIntegrationService.today != null) {
+      _wearableByAthlete[athlete.id] = wearableIntegrationService.today!;
+    }
+
+    _recalculateFatigueForAthlete(athlete.id);
+
+    _save();
+
+    notifyListeners();
+  }
+
+  void _recalculateFatigueForAthlete(String athleteId) {
+    final history = _historyByAthlete[athleteId] ?? [];
+    final wearable = _wearableByAthlete[athleteId];
+
+    final lastEntry = history.isEmpty ? null : history.last;
+
+    final gymLoad = lastEntry?.gymKg ?? 0;
+    final skateKm = lastEntry?.skateKm ?? 0;
+    final minutes = lastEntry?.minutes ?? 0;
+
+    final fatigueStatus = FatigueEngine.calculateStatus(
+      gymLoad: gymLoad,
+      skateKm: skateKm,
+      minutes: minutes,
+    );
+
+    final readiness = FatigueEngine.readinessScore(
+      gymLoad: gymLoad,
+      skateKm: skateKm,
+      minutes: minutes,
+      sleepHours: wearable?.sleepHours.round() ?? 7,
+      stress: wearable?.stress ?? 40,
+      hrv: wearable?.hrv ?? 55,
+      restingHeartRate: wearable?.restingHeartRate ?? 52,
+      soreness: wearable?.soreness ?? 3,
+    );
+
+    _fatigueByAthlete[athleteId] = fatigueStatus;
+    _readinessByAthlete[athleteId] = readiness;
+  }
+
+  bool get shouldBlockProgression {
+    return FatigueEngine.shouldBlockProgression(activeFatigueStatus);
+  }
+
+  bool get shouldForceRecovery {
+    return FatigueEngine.shouldForceRecovery(activeFatigueStatus);
+  }
+
+  Future<void> _save() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+
+      final wearableMap = <String, dynamic>{};
+
+      _wearableByAthlete.forEach((athleteId, wearable) {
+        // CORREGIDO: usa toMap() completo
+        wearableMap[athleteId] = wearable.toMap();
+      });
+
+      final map = {
+        'activeAthleteId': _activeAthlete?.id,
+        'fatigue': _fatigueByAthlete,
+        'readiness': _readinessByAthlete,
+        'wearables': wearableMap,
+      };
+
+      await prefs.setString(_storageKey, jsonEncode(map));
+    } catch (_) {}
+  }
+
+  Future<void> _load() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+
+      final raw = prefs.getString(_storageKey);
+
+      if (raw == null || raw.isEmpty) return;
+
+      final map = jsonDecode(raw);
+
+      final fatigue = Map<String, dynamic>.from(map['fatigue'] ?? {});
+
+      final readiness = Map<String, dynamic>.from(map['readiness'] ?? {});
+
+      final wearables = Map<String, dynamic>.from(map['wearables'] ?? {});
+
+      fatigue.forEach((key, value) {
+        _fatigueByAthlete[key] = value.toString();
+      });
+
+      readiness.forEach((key, value) {
+        _readinessByAthlete[key] = (value as num?)?.toInt() ?? 100;
+      });
+
+      wearables.forEach((athleteId, rawWearable) {
+        final wearable = Map<String, dynamic>.from(rawWearable);
+
+        // CORREGIDO: usa fromMap() completo
+        _wearableByAthlete[athleteId] = WearableDailyData.fromMap(wearable);
+      });
+    } catch (_) {}
+  }
+}

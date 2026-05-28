@@ -1,0 +1,469 @@
+import os
+from pathlib import Path
+from datetime import date, datetime
+
+from dotenv import load_dotenv
+from garminconnect import Garmin
+
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+ATHLETES_DIR = BASE_DIR / "backend_tools" / "garmin_private_sync" / "athletes"
+
+
+class GarminService:
+    def __init__(self):
+        self.clients = {}
+
+    def _env_path(self, athlete_id: str):
+        return ATHLETES_DIR / athlete_id / ".env"
+
+    def _load_credentials(self, athlete_id: str):
+        env_path = self._env_path(athlete_id)
+
+        if not env_path.exists():
+            raise RuntimeError(f"No existe .env para atleta: {athlete_id}")
+
+        load_dotenv(env_path, override=True)
+
+        email = os.getenv("GARMIN_EMAIL")
+        password = os.getenv("GARMIN_PASSWORD")
+
+        if not email or not password:
+            raise RuntimeError(f"Faltan credenciales Garmin para: {athlete_id}")
+
+        return email, password
+
+    def login(self, athlete_id: str):
+        if athlete_id not in self.clients:
+            email, password = self._load_credentials(athlete_id)
+
+            print(f"🔐 Login Garmin para atleta: {athlete_id}")
+            self.clients[athlete_id] = Garmin(email, password)
+            self.clients[athlete_id].login()
+            print(f"✅ Login exitoso para atleta: {athlete_id}")
+
+        return self.clients[athlete_id]
+
+    def sync(self, athlete_id: str):
+        client = self.login(athlete_id)
+
+        # ✅ Usar strftime para garantizar formato YYYY-MM-DD
+        today = date.today().strftime("%Y-%m-%d")
+
+        athlete_dir = ATHLETES_DIR / athlete_id
+        activities_dir = athlete_dir / "activities"
+
+        # Crear directorio si no existe
+        activities_dir.mkdir(parents=True, exist_ok=True)
+
+        print(f"\n📡 Sincronizando Garmin para atleta: {athlete_id}")
+        print(f"   Fecha: {today}")
+
+        # Actividades
+        try:
+            activities = client.get_activities(0, 5)
+            print(f"   ✅ Actividades obtenidas: {len(activities)}")
+        except Exception as e:
+            print(f"   ❌ ERROR activities: {e}")
+            activities = []
+
+        # Stats diarios
+        try:
+            stats = client.get_stats(today)
+            print(f"   ✅ Stats obtenidos: {list(stats.keys()) if stats else 'None'}")
+        except Exception as e:
+            print(f"   ❌ ERROR stats: {e}")
+            stats = {}
+
+        # Datos de sueño
+        try:
+            sleep_data = client.get_sleep_data(today)
+            print(f"   ✅ Sleep data: {sleep_data is not None}")
+        except Exception as e:
+            print(f"   ❌ ERROR sleep_data: {e}")
+            sleep_data = {}
+
+        # Datos de HRV
+        try:
+            hrv_data = client.get_hrv_data(today)
+            print(f"   ✅ HRV data: {hrv_data is not None}")
+        except Exception as e:
+            print(f"   ❌ ERROR hrv_data: {e}")
+            hrv_data = {}
+
+        # Datos de estrés
+        try:
+            stress_data = client.get_stress_data(today)
+            print(f"   ✅ Stress data: {stress_data is not None}")
+        except Exception as e:
+            print(f"   ❌ ERROR stress_data: {e}")
+            stress_data = {}
+
+        # ✅ Body battery necesita startDate y endDate (ambos string)
+        try:
+            body_battery_data = client.get_body_battery(today, today)
+            print(f"   ✅ Body battery data: {body_battery_data is not None}")
+        except Exception as e:
+            print(f"   ❌ ERROR body_battery_data: {e}")
+            body_battery_data = {}
+
+        return {
+            "status": "connected",
+            "source": "garmin",
+            "date": today,
+            "activities": activities,
+            "stats": stats,
+            "sleep_data": sleep_data,
+            "hrv_data": hrv_data,
+            "stress_data": stress_data,
+            "body_battery_data": body_battery_data,
+        }
+
+    def get_normalized(self, athlete_id: str):
+        raw = self.sync(athlete_id)
+
+        activities = raw.get("activities", [])
+        stats = raw.get("stats", {})
+        sleep_data = raw.get("sleep_data", {})
+        hrv_data = raw.get("hrv_data", {})
+        stress_data = raw.get("stress_data", {})
+        body_battery_data = raw.get("body_battery_data", {})
+
+        normalized_activities = []
+
+        for activity in activities:
+            duration_sec = activity.get("duration") or 0
+            distance_m = activity.get("distance") or 0
+            avg_hr = activity.get("averageHR")
+            max_hr = activity.get("maxHR")
+            aerobic_te = activity.get("aerobicTrainingEffect")
+            anaerobic_te = activity.get("anaerobicTrainingEffect")
+            label = activity.get("trainingEffectLabel")
+
+            normalized_activities.append({
+                "activity_id": activity.get("activityId"),
+                "name": activity.get("activityName"),
+                "session_type": self._detect_session_type(activity),
+                "start_time": activity.get("startTimeLocal"),
+                "duration_sec": duration_sec,
+                "duration_min": round(duration_sec / 60, 1),
+                "distance_m": distance_m,
+                "distance_km": round(distance_m / 1000, 2),
+                "avg_hr": avg_hr,
+                "max_hr": max_hr,
+                "avg_speed_mps": activity.get("averageSpeed"),
+                "max_speed_mps": activity.get("maxSpeed"),
+                "calories": activity.get("calories"),
+                "aerobic_training_effect": aerobic_te,
+                "anaerobic_training_effect": anaerobic_te,
+                "training_effect_label": label,
+                "body_battery_delta": activity.get("differenceBodyBattery"),
+                "internal_load": self._calculate_internal_load(
+                    duration_sec,
+                    avg_hr,
+                    aerobic_te,
+                    anaerobic_te,
+                ),
+            })
+
+        total_duration_min = sum(
+            a["duration_min"] for a in normalized_activities
+        )
+
+        total_distance_km = sum(
+            a["distance_km"] for a in normalized_activities
+        )
+
+        total_internal_load = sum(
+            a["internal_load"] for a in normalized_activities
+        )
+
+        sleep_minutes = self._extract_sleep_minutes(sleep_data)
+        hrv = self._extract_hrv(hrv_data)
+
+        resting_hr = self._first_number(
+            stats,
+            [
+                "restingHeartRate",
+                "minRestingHeartRate",
+                "resting_hr",
+            ],
+        )
+
+        stress = self._first_number(
+            stress_data,
+            [
+                "averageStressLevel",
+                "avgStressLevel",
+                "stressLevel",
+            ],
+        )
+
+        if stress is None:
+            stress = self._first_number(
+                stats,
+                [
+                    "averageStressLevel",
+                    "avgStressLevel",
+                    "stressLevel",
+                ],
+            )
+
+        body_battery = self._extract_body_battery(body_battery_data)
+
+        if body_battery is None:
+            body_battery = self._first_number(
+                stats,
+                [
+                    "bodyBatteryMostRecentValue",
+                    "bodyBattery",
+                    "body_battery_current",
+                ],
+            )
+
+        steps = self._first_number(
+            stats,
+            [
+                "totalSteps",
+                "steps",
+            ],
+        )
+
+        summary = {
+            "total_sessions": len(normalized_activities),
+            "total_duration_min": round(total_duration_min, 1),
+            "total_distance_km": round(total_distance_km, 2),
+            "total_internal_load": round(total_internal_load, 1),
+
+            # Canonical keys for Flutter
+            "sleepMinutes": sleep_minutes or 0,
+            "hrv": hrv or 0,
+            "restingHeartRate": round(resting_hr) if resting_hr is not None else 0,
+            "stress": round(stress) if stress is not None else 0,
+            "bodyBattery": round(body_battery) if body_battery is not None else 0,
+            "steps": round(steps) if steps is not None else 0,
+
+            # Legacy keys kept for compatibility
+            "body_battery_current": round(body_battery) if body_battery is not None else 0,
+            "resting_hr": round(resting_hr) if resting_hr is not None else 0,
+            "avg_stress": round(stress) if stress is not None else 0,
+        }
+
+        return {
+            "status": "normalized",
+            "source": "garmin",
+            "date": raw.get("date"),
+            "summary": summary,
+            "sessions": normalized_activities,
+            "debug_sources": {
+                "has_stats": bool(stats),
+                "has_sleep_data": bool(sleep_data),
+                "has_hrv_data": bool(hrv_data),
+                "has_stress_data": bool(stress_data),
+                "has_body_battery_data": bool(body_battery_data),
+            },
+        }
+
+    def _detect_session_type(self, activity):
+        name = (activity.get("activityName") or "").lower()
+        activity_type = activity.get("activityType", {}).get("typeKey", "")
+        label = activity.get("trainingEffectLabel")
+
+        if "patinaje" in name or "skate" in name:
+            return "speed_skating"
+
+        if activity_type == "indoor_cycling":
+            return "bike_secondary"
+
+        if label == "RECOVERY":
+            return "recovery"
+
+        if label == "SPEED":
+            return "speed"
+
+        return activity_type or "unknown"
+
+    def _calculate_internal_load(
+        self,
+        duration_sec,
+        avg_hr,
+        aerobic_te,
+        anaerobic_te,
+    ):
+        duration_min = duration_sec / 60 if duration_sec else 0
+
+        hr_factor = (avg_hr or 100) / 100
+
+        aerobic_factor = aerobic_te or 0
+        anaerobic_factor = anaerobic_te or 0
+
+        load = duration_min * hr_factor
+        load += aerobic_factor * 10
+        load += anaerobic_factor * 15
+
+        return round(load, 1)
+
+    def _first_number(self, data, keys):
+        if not isinstance(data, dict):
+            return None
+
+        for key in keys:
+            value = data.get(key)
+
+            if isinstance(value, (int, float)):
+                return value
+
+            if isinstance(value, str):
+                try:
+                    return float(value)
+                except ValueError:
+                    pass
+
+        return None
+
+    def _extract_sleep_minutes(self, sleep_data):
+        if not isinstance(sleep_data, dict):
+            return 0
+
+        seconds = self._first_number(
+            sleep_data,
+            [
+                "totalSleepSeconds",
+                "sleepTimeSeconds",
+                "totalSleepDuration",
+                "durationInSeconds",
+            ],
+        )
+
+        if seconds is not None and seconds > 0:
+            return round(seconds / 60)
+
+        minutes = self._first_number(
+            sleep_data,
+            [
+                "sleepMinutes",
+                "totalSleepMinutes",
+            ],
+        )
+
+        if minutes is not None and minutes > 0:
+            return round(minutes)
+
+        hours = self._first_number(
+            sleep_data,
+            [
+                "sleepHours",
+                "totalSleepHours",
+            ],
+        )
+
+        if hours is not None and hours > 0:
+            return round(hours * 60)
+
+        daily_sleep = sleep_data.get("dailySleepDTO")
+
+        if isinstance(daily_sleep, dict):
+            seconds = self._first_number(
+                daily_sleep,
+                [
+                    "sleepTimeSeconds",
+                    "totalSleepSeconds",
+                    "sleepDuration",
+                ],
+            )
+
+            if seconds is not None and seconds > 0:
+                return round(seconds / 60)
+
+        return 0
+
+    def _extract_hrv(self, hrv_data):
+        if not isinstance(hrv_data, dict):
+            return 0
+
+        direct = self._first_number(
+            hrv_data,
+            [
+                "weeklyAverage",
+                "lastNightAvg",
+                "hrvValue",
+                "average",
+                "avg",
+            ],
+        )
+
+        if direct is not None and direct > 0:
+            return round(direct)
+
+        hrv_summary = hrv_data.get("hrvSummary")
+
+        if isinstance(hrv_summary, dict):
+            value = self._first_number(
+                hrv_summary,
+                [
+                    "weeklyAverage",
+                    "lastNightAvg",
+                    "lastNightAverage",
+                    "average",
+                    "hrvValue",
+                ],
+            )
+
+            if value is not None and value > 0:
+                return round(value)
+
+        hrv_values = hrv_data.get("hrvValues")
+
+        if isinstance(hrv_values, list) and hrv_values:
+            values = []
+
+            for item in hrv_values:
+                if isinstance(item, dict):
+                    value = self._first_number(
+                        item,
+                        [
+                            "hrv",
+                            "value",
+                            "rmssd",
+                            "hrvValue",
+                        ],
+                    )
+
+                    if value is not None and value > 0:
+                        values.append(value)
+
+            if values:
+                return round(sum(values) / len(values))
+
+        return 0
+
+    def _extract_body_battery(self, body_battery_data):
+        if isinstance(body_battery_data, dict):
+            value = self._first_number(
+                body_battery_data,
+                [
+                    "mostRecentValue",
+                    "bodyBattery",
+                    "value",
+                ],
+            )
+
+            if value is not None:
+                return value
+
+        if isinstance(body_battery_data, list) and body_battery_data:
+            last_item = body_battery_data[-1]
+
+            if isinstance(last_item, dict):
+                value = self._first_number(
+                    last_item,
+                    [
+                        "bodyBattery",
+                        "value",
+                        "mostRecentValue",
+                    ],
+                )
+
+                if value is not None:
+                    return value
+
+        return None
