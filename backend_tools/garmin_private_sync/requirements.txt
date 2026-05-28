@@ -1,4 +1,0 @@
-garminconnect
-curl_cffi
-fitdecode
-python-dotenv
