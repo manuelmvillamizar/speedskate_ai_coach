@@ -3,4 +3,4 @@ curl_cffi
 fitdecode
 python-dotenv
 fastapi
-uvicorn
+uvicorn[standard]
