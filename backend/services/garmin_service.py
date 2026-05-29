@@ -373,19 +373,20 @@ class GarminService:
 
             if seconds is not None and seconds > 0:
                 return round(seconds / 60)
-                    sleep_need = daily_sleep.get("sleepNeed")
 
-        if isinstance(sleep_need, dict):
-            actual = self._first_number(
-                sleep_need,
-                [
-                    "actual",
-                    "baseline",
-                ],
-            )
+            sleep_need = daily_sleep.get("sleepNeed")
 
-            if actual is not None and actual > 0:
-                return round(actual)
+            if isinstance(sleep_need, dict):
+                actual = self._first_number(
+                    sleep_need,
+                    [
+                        "actual",
+                        "baseline",
+                    ],
+                )
+
+                if actual is not None and actual > 0:
+                    return round(actual)
 
         return 0
 
