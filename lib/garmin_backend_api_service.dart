@@ -26,13 +26,7 @@ class GarminBackendApiService {
   static String developmentIp = '192.168.1.121';
 
   static String get _baseUrl {
-    if (Platform.isAndroid) {
-      return 'http://$developmentIp:8000';
-    } else if (Platform.isIOS) {
-      return 'http://localhost:8000';
-    } else {
-      return 'http://localhost:8000';
-    }
+    return 'https://speedskate-ai-coach.onrender.com';
   }
 
   static Future<GarminSyncResult> syncGarmin({
@@ -92,28 +86,46 @@ class GarminBackendApiService {
           summary['nightly_hrv'],
     );
 
-    final sleepMinutes = _sleepMinutesFromSummary(summary);
+    final stats = Map<String, dynamic>.from(data['stats'] ?? {});
+
+    final sleepData = Map<String, dynamic>.from(data['sleep_data'] ?? {});
+    final dailySleep = Map<String, dynamic>.from(
+      sleepData['dailySleepDTO'] ?? {},
+    );
+
+    final stressData = Map<String, dynamic>.from(data['stress_data'] ?? {});
+
+    final sleepMinutes = _sleepMinutesFromSummary(summary) > 0
+        ? _sleepMinutesFromSummary(summary)
+        : (_intFromAny(dailySleep['sleepTimeSeconds']) / 60).round();
 
     final restingHeartRate = _intFromAny(
       summary['resting_hr'] ??
           summary['restingHeartRate'] ??
-          summary['resting_heart_rate'],
+          summary['resting_heart_rate'] ??
+          stats['restingHeartRate'],
     );
 
     final stress = _intFromAny(
-      summary['avg_stress'] ?? summary['stress'] ?? summary['average_stress'],
+      summary['avg_stress'] ??
+          summary['stress'] ??
+          summary['average_stress'] ??
+          stressData['avgStressLevel'],
     );
 
     final bodyBattery = _intFromAny(
       summary['body_battery_current'] ??
           summary['bodyBattery'] ??
-          summary['body_battery'],
+          summary['body_battery'] ??
+          stats['bodyBatteryMostRecentValue'],
     );
 
     final steps = _intFromAny(
-      summary['steps'] ?? summary['totalSteps'] ?? summary['total_steps'],
+      summary['steps'] ??
+          summary['totalSteps'] ??
+          summary['total_steps'] ??
+          stats['totalSteps'],
     );
-
     final activeCalories = _intFromAny(
       summary['active_calories'] ??
           summary['activeCalories'] ??
