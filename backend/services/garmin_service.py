@@ -110,7 +110,6 @@ class GarminService:
             "body_battery_data": body_battery_data,
         }
 
-    # ✅ FUNCIÓN CORREGIDA - Una sola definición
     def get_normalized(self, athlete_id: str, target_date: str | None = None):
         raw = self.sync(athlete_id, target_date)
 
@@ -132,6 +131,7 @@ class GarminService:
             anaerobic_te = activity.get("anaerobicTrainingEffect")
             label = activity.get("trainingEffectLabel")
 
+            # ✅ BLOQUE MODIFICADO SEGÚN LO PEDIDO
             normalized_activities.append({
                 "activity_id": activity.get("activityId"),
                 "name": activity.get("activityName"),
@@ -143,6 +143,13 @@ class GarminService:
                 "distance_km": round(distance_m / 1000, 2),
                 "avg_hr": avg_hr,
                 "max_hr": max_hr,
+
+                "hrTimeInZone_1": activity.get("hrTimeInZone_1"),
+                "hrTimeInZone_2": activity.get("hrTimeInZone_2"),
+                "hrTimeInZone_3": activity.get("hrTimeInZone_3"),
+                "hrTimeInZone_4": activity.get("hrTimeInZone_4"),
+                "hrTimeInZone_5": activity.get("hrTimeInZone_5"),
+
                 "avg_speed_mps": activity.get("averageSpeed"),
                 "max_speed_mps": activity.get("maxSpeed"),
                 "calories": activity.get("calories"),
@@ -213,7 +220,6 @@ class GarminService:
             ],
         )
 
-        # ✅ Nuevos: extraer steps y resting_hr desde actividades si no están en stats
         if steps is None:
             steps = self._extract_steps_from_activities(activities)
 
