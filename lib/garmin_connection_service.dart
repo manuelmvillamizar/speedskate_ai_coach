@@ -27,12 +27,9 @@ class GarminConnectionResult {
 }
 
 class GarminConnectionService {
-  static const bool garminApiConfigured = false;
-
-  // Cuando tengas backend real:
-  // static const bool garminApiConfigured = true;
-  // static const String backendBaseUrl = 'https://tu-backend.com';
-  static const String backendBaseUrl = '';
+  static const bool garminApiConfigured = true;
+  static const String backendBaseUrl =
+      'https://speedskate-ai-coach.onrender.com';
 
   static Future<GarminConnectionResult> connect({
     required String athleteId,
@@ -519,5 +516,3 @@ class _GarminZones {
     );
   }
 }
-
-
