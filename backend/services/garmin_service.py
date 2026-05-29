@@ -46,19 +46,16 @@ class GarminService:
     def sync(self, athlete_id: str):
         client = self.login(athlete_id)
 
-        # ✅ Usar strftime para garantizar formato YYYY-MM-DD
         today = date.today().strftime("%Y-%m-%d")
 
         athlete_dir = ATHLETES_DIR / athlete_id
         activities_dir = athlete_dir / "activities"
 
-        # Crear directorio si no existe
         activities_dir.mkdir(parents=True, exist_ok=True)
 
         print(f"\n📡 Sincronizando Garmin para atleta: {athlete_id}")
         print(f"   Fecha: {today}")
 
-        # Actividades
         try:
             activities = client.get_activities(0, 5)
             print(f"   ✅ Actividades obtenidas: {len(activities)}")
@@ -66,7 +63,6 @@ class GarminService:
             print(f"   ❌ ERROR activities: {e}")
             activities = []
 
-        # Stats diarios
         try:
             stats = client.get_stats(today)
             print(f"   ✅ Stats obtenidos: {list(stats.keys()) if stats else 'None'}")
@@ -74,7 +70,6 @@ class GarminService:
             print(f"   ❌ ERROR stats: {e}")
             stats = {}
 
-        # Datos de sueño
         try:
             sleep_data = client.get_sleep_data(today)
             print(f"   ✅ Sleep data: {sleep_data is not None}")
@@ -82,7 +77,6 @@ class GarminService:
             print(f"   ❌ ERROR sleep_data: {e}")
             sleep_data = {}
 
-        # Datos de HRV
         try:
             hrv_data = client.get_hrv_data(today)
             print(f"   ✅ HRV data: {hrv_data is not None}")
@@ -90,7 +84,6 @@ class GarminService:
             print(f"   ❌ ERROR hrv_data: {e}")
             hrv_data = {}
 
-        # Datos de estrés
         try:
             stress_data = client.get_stress_data(today)
             print(f"   ✅ Stress data: {stress_data is not None}")
@@ -98,7 +91,6 @@ class GarminService:
             print(f"   ❌ ERROR stress_data: {e}")
             stress_data = {}
 
-        # ✅ Body battery necesita startDate y endDate (ambos string)
         try:
             body_battery_data = client.get_body_battery(today, today)
             print(f"   ✅ Body battery data: {body_battery_data is not None}")
@@ -165,17 +157,9 @@ class GarminService:
                 ),
             })
 
-        total_duration_min = sum(
-            a["duration_min"] for a in normalized_activities
-        )
-
-        total_distance_km = sum(
-            a["distance_km"] for a in normalized_activities
-        )
-
-        total_internal_load = sum(
-            a["internal_load"] for a in normalized_activities
-        )
+        total_duration_min = sum(a["duration_min"] for a in normalized_activities)
+        total_distance_km = sum(a["distance_km"] for a in normalized_activities)
+        total_internal_load = sum(a["internal_load"] for a in normalized_activities)
 
         sleep_minutes = self._extract_sleep_minutes(sleep_data)
         hrv = self._extract_hrv(hrv_data)
@@ -228,13 +212,19 @@ class GarminService:
             ],
         )
 
+        # ✅ Nuevos: extraer steps y resting_hr desde actividades si no están en stats
+        if steps is None:
+            steps = self._extract_steps_from_activities(activities)
+
+        if resting_hr is None:
+            resting_hr = self._extract_resting_hr_from_activities(activities)
+
         summary = {
             "total_sessions": len(normalized_activities),
             "total_duration_min": round(total_duration_min, 1),
             "total_distance_km": round(total_distance_km, 2),
             "total_internal_load": round(total_internal_load, 1),
 
-            # Canonical keys for Flutter
             "sleepMinutes": sleep_minutes or 0,
             "hrv": hrv or 0,
             "restingHeartRate": round(resting_hr) if resting_hr is not None else 0,
@@ -242,7 +232,6 @@ class GarminService:
             "bodyBattery": round(body_battery) if body_battery is not None else 0,
             "steps": round(steps) if steps is not None else 0,
 
-            # Legacy keys kept for compatibility
             "body_battery_current": round(body_battery) if body_battery is not None else 0,
             "resting_hr": round(resting_hr) if resting_hr is not None else 0,
             "avg_stress": round(stress) if stress is not None else 0,
@@ -282,24 +271,12 @@ class GarminService:
 
         return activity_type or "unknown"
 
-    def _calculate_internal_load(
-        self,
-        duration_sec,
-        avg_hr,
-        aerobic_te,
-        anaerobic_te,
-    ):
+    def _calculate_internal_load(self, duration_sec, avg_hr, aerobic_te, anaerobic_te):
         duration_min = duration_sec / 60 if duration_sec else 0
-
         hr_factor = (avg_hr or 100) / 100
-
-        aerobic_factor = aerobic_te or 0
-        anaerobic_factor = anaerobic_te or 0
-
         load = duration_min * hr_factor
-        load += aerobic_factor * 10
-        load += anaerobic_factor * 15
-
+        load += (aerobic_te or 0) * 10
+        load += (anaerobic_te or 0) * 15
         return round(load, 1)
 
     def _first_number(self, data, keys):
@@ -451,33 +428,97 @@ class GarminService:
         return 0
 
     def _extract_body_battery(self, body_battery_data):
+        values = []
+
         if isinstance(body_battery_data, dict):
-            value = self._first_number(
+            direct = self._first_number(
                 body_battery_data,
                 [
                     "mostRecentValue",
                     "bodyBattery",
                     "value",
+                    "bodyBatteryMostRecentValue",
                 ],
             )
 
-            if value is not None:
-                return value
+            if direct is not None and direct > 0:
+                return direct
 
-        if isinstance(body_battery_data, list) and body_battery_data:
-            last_item = body_battery_data[-1]
+            array = body_battery_data.get("bodyBatteryValuesArray")
+            if isinstance(array, list):
+                for item in array:
+                    if isinstance(item, list) and len(item) >= 2:
+                        value = item[1]
+                        if isinstance(value, (int, float)) and value > 0:
+                            values.append(value)
 
-            if isinstance(last_item, dict):
-                value = self._first_number(
-                    last_item,
+        if isinstance(body_battery_data, list):
+            for day in body_battery_data:
+                if not isinstance(day, dict):
+                    continue
+
+                direct = self._first_number(
+                    day,
                     [
+                        "mostRecentValue",
                         "bodyBattery",
                         "value",
-                        "mostRecentValue",
+                        "bodyBatteryMostRecentValue",
                     ],
                 )
 
-                if value is not None:
-                    return value
+                if direct is not None and direct > 0:
+                    values.append(direct)
+
+                array = day.get("bodyBatteryValuesArray")
+                if isinstance(array, list):
+                    for item in array:
+                        if isinstance(item, list) and len(item) >= 2:
+                            value = item[1]
+                            if isinstance(value, (int, float)) and value > 0:
+                                values.append(value)
+
+        if values:
+            return values[-1]
+
+        return None
+
+    def _extract_steps_from_activities(self, activities):
+        total = 0
+
+        if not isinstance(activities, list):
+            return None
+
+        for activity in activities:
+            if not isinstance(activity, dict):
+                continue
+
+            value = self._first_number(activity, ["steps"])
+
+            if value is not None and value > 0:
+                total += value
+
+        return total if total > 0 else None
+
+    def _extract_resting_hr_from_activities(self, activities):
+        values = []
+
+        if not isinstance(activities, list):
+            return None
+
+        for activity in activities:
+            if not isinstance(activity, dict):
+                continue
+
+            value = self._first_number(
+                activity,
+                ["restingHeartRate", "minHeartRate", "averageHR"],
+            )
+
+            if value is not None and value > 0:
+                values.append(value)
+
+        if values:
+            return min(values)
 
         return None
