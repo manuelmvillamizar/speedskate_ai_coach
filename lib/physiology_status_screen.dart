@@ -456,6 +456,23 @@ class _RecoveryGrid extends StatelessWidget {
               icon: Icons.battery_charging_full,
               color: wearable.bodyBattery > 0 ? Colors.teal : Colors.grey,
             ),
+            // ✅ NUEVAS TARJETAS: FC reposo y Pasos
+            _MetricCard(
+              title: AppText.t(lang, 'FC reposo', 'Resting HR', 'Ruhepuls'),
+              value: wearable.restingHeartRate > 0
+                  ? '${wearable.restingHeartRate}'
+                  : _noData(lang),
+              subtitle: 'Garmin',
+              icon: Icons.favorite_border,
+              color: wearable.restingHeartRate > 0 ? Colors.red : Colors.grey,
+            ),
+            _MetricCard(
+              title: AppText.t(lang, 'Pasos', 'Steps', 'Schritte'),
+              value: wearable.steps > 0 ? '${wearable.steps}' : _noData(lang),
+              subtitle: AppText.t(lang, 'Hoy', 'Today', 'Heute'),
+              icon: Icons.directions_walk,
+              color: wearable.steps > 0 ? Colors.blue : Colors.grey,
+            ),
           ],
         ),
       ],

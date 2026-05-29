@@ -43,10 +43,10 @@ class GarminService:
 
         return self.clients[athlete_id]
 
-    def sync(self, athlete_id: str):
+    def sync(self, athlete_id: str, target_date: str | None = None):
         client = self.login(athlete_id)
 
-        today = date.today().strftime("%Y-%m-%d")
+        today = target_date or date.today().strftime("%Y-%m-%d")
 
         athlete_dir = ATHLETES_DIR / athlete_id
         activities_dir = athlete_dir / "activities"
@@ -111,10 +111,10 @@ class GarminService:
         }
 
     def get_normalized(self, athlete_id: str):
-        raw = self.sync(athlete_id)
+        raw = self.sync(athlete_id, target_date)
 
         activities = raw.get("activities", [])
-        stats = raw.get("stats", {})
+        stats = raw.get("stats", {})def get_normalized(self, athlete_id: str, target_date: str | None = None):
         sleep_data = raw.get("sleep_data", {})
         hrv_data = raw.get("hrv_data", {})
         stress_data = raw.get("stress_data", {})

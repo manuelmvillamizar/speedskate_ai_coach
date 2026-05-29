@@ -25,20 +25,26 @@ class _GarminCredentialsScreenState extends State<GarminCredentialsScreen> {
   @override
   void initState() {
     super.initState();
-    _loadExistingEmail();
+    _loadExistingCredentials();
   }
 
-  Future<void> _loadExistingEmail() async {
+  Future<void> _loadExistingCredentials() async {
     final email = await GarminCredentialsService.readEmail(widget.athlete.id);
+
+    final password = await GarminCredentialsService.readPassword(
+      widget.athlete.id,
+    );
 
     if (!mounted) return;
 
     setState(() {
       emailController.text = email ?? '';
+      passwordController.text = password ?? '';
       loading = false;
-      statusMessage = email == null
+
+      statusMessage = email == null || password == null
           ? 'Ingresa las credenciales Garmin de este atleta.'
-          : 'Ya existe un correo Garmin guardado para este atleta.';
+          : 'Credenciales Garmin guardadas para este atleta.';
     });
   }
 

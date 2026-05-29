@@ -280,6 +280,7 @@ class GarminBackendApiService {
     );
   }
 
+  // ✅ FUNCIÓN CORREGIDA - Ahora soporta hrTimeInZone_$zone
   static int _zoneFromSession(Map<String, dynamic> session, int zone) {
     final direct = _intFromAny(
       session['zone${zone}Minutes'] ??
@@ -289,6 +290,12 @@ class GarminBackendApiService {
 
     if (direct > 0) {
       return direct;
+    }
+
+    final garminSeconds = _doubleFromAny(session['hrTimeInZone_$zone']);
+
+    if (garminSeconds > 0) {
+      return (garminSeconds / 60).round();
     }
 
     final zones = session['zones'];
