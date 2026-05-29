@@ -91,5 +91,6 @@ def get_normalized_garmin(
     date: str | None = Query(None),
 ):
     return garmin_service.get_normalized(
-        athlete_id=athleteId,
-    )
+    athlete_id=athleteId,
+    target_date=date,
+)
