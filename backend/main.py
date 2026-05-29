@@ -88,7 +88,9 @@ def sync_garmin(
 @app.get("/garmin/normalized")
 def get_normalized_garmin(
     athleteId: str = Query(...),
+    date: str | None = Query(None),
 ):
     return garmin_service.get_normalized(
         athlete_id=athleteId,
+        date=date,
     )
