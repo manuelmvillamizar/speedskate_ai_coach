@@ -110,11 +110,12 @@ class GarminService:
             "body_battery_data": body_battery_data,
         }
 
-    def get_normalized(self, athlete_id: str):
+    # ✅ FUNCIÓN CORREGIDA - Una sola definición
+    def get_normalized(self, athlete_id: str, target_date: str | None = None):
         raw = self.sync(athlete_id, target_date)
 
         activities = raw.get("activities", [])
-        stats = raw.get("stats", {})def get_normalized(self, athlete_id: str, target_date: str | None = None):
+        stats = raw.get("stats", {})
         sleep_data = raw.get("sleep_data", {})
         hrv_data = raw.get("hrv_data", {})
         stress_data = raw.get("stress_data", {})
