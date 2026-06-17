@@ -134,6 +134,7 @@ class GarminService:
             "stress_data": stress_data,
             "body_battery_data": body_battery_data,
         }
+
     def get_normalized(self, athlete_id: str, target_date: str | None = None):
         raw = self.sync(athlete_id, target_date)
 
@@ -144,9 +145,30 @@ class GarminService:
         stress_data = raw.get("stress_data", {})
         body_battery_data = raw.get("body_battery_data", {})
 
-        normalized_activities = []
+        days = {}
 
         for activity in activities:
+            start_time = (
+                activity.get("startTimeLocal")
+                or activity.get("startTimeGMT")
+                or activity.get("startTime")
+                or raw.get("date")
+            )
+
+            activity_date = str(start_time)[:10]
+
+            if activity_date not in days:
+                days[activity_date] = {
+                    "date": activity_date,
+                    "sessions": [],
+                    "summary": {
+                        "total_sessions": 0,
+                        "total_duration_min": 0,
+                        "total_distance_km": 0,
+                        "total_internal_load": 0,
+                    },
+                }
+
             duration_sec = activity.get("duration") or 0
             distance_m = activity.get("distance") or 0
             avg_hr = activity.get("averageHR")
@@ -155,25 +177,25 @@ class GarminService:
             anaerobic_te = activity.get("anaerobicTrainingEffect")
             label = activity.get("trainingEffectLabel")
 
-            # ✅ BLOQUE MODIFICADO SEGÚN LO PEDIDO
-            normalized_activities.append({
+            duration_min = round(duration_sec / 60, 1)
+            distance_km = round(distance_m / 1000, 2)
+
+            session = {
                 "activity_id": activity.get("activityId"),
                 "name": activity.get("activityName"),
                 "session_type": self._detect_session_type(activity),
-                "start_time": activity.get("startTimeLocal"),
+                "start_time": start_time,
                 "duration_sec": duration_sec,
-                "duration_min": round(duration_sec / 60, 1),
+                "duration_min": duration_min,
                 "distance_m": distance_m,
-                "distance_km": round(distance_m / 1000, 2),
+                "distance_km": distance_km,
                 "avg_hr": avg_hr,
                 "max_hr": max_hr,
-
                 "hrTimeInZone_1": activity.get("hrTimeInZone_1"),
                 "hrTimeInZone_2": activity.get("hrTimeInZone_2"),
                 "hrTimeInZone_3": activity.get("hrTimeInZone_3"),
                 "hrTimeInZone_4": activity.get("hrTimeInZone_4"),
                 "hrTimeInZone_5": activity.get("hrTimeInZone_5"),
-
                 "avg_speed_mps": activity.get("averageSpeed"),
                 "max_speed_mps": activity.get("maxSpeed"),
                 "calories": activity.get("calories"),
@@ -187,41 +209,33 @@ class GarminService:
                     aerobic_te,
                     anaerobic_te,
                 ),
-            })
+            }
 
-        total_duration_min = sum(a["duration_min"] for a in normalized_activities)
-        total_distance_km = sum(a["distance_km"] for a in normalized_activities)
-        total_internal_load = sum(a["internal_load"] for a in normalized_activities)
+            days[activity_date]["sessions"].append(session)
+            days[activity_date]["summary"]["total_sessions"] += 1
+            days[activity_date]["summary"]["total_duration_min"] += duration_min
+            days[activity_date]["summary"]["total_distance_km"] += distance_km
+            days[activity_date]["summary"]["total_internal_load"] += session[
+                "internal_load"
+            ]
 
         sleep_minutes = self._extract_sleep_minutes(sleep_data)
         hrv = self._extract_hrv(hrv_data)
 
         resting_hr = self._first_number(
             stats,
-            [
-                "restingHeartRate",
-                "minRestingHeartRate",
-                "resting_hr",
-            ],
+            ["restingHeartRate", "minRestingHeartRate", "resting_hr"],
         )
 
         stress = self._first_number(
             stress_data,
-            [
-                "averageStressLevel",
-                "avgStressLevel",
-                "stressLevel",
-            ],
+            ["averageStressLevel", "avgStressLevel", "stressLevel"],
         )
 
         if stress is None:
             stress = self._first_number(
                 stats,
-                [
-                    "averageStressLevel",
-                    "avgStressLevel",
-                    "stressLevel",
-                ],
+                ["averageStressLevel", "avgStressLevel", "stressLevel"],
             )
 
         body_battery = self._extract_body_battery(body_battery_data)
@@ -236,13 +250,7 @@ class GarminService:
                 ],
             )
 
-        steps = self._first_number(
-            stats,
-            [
-                "totalSteps",
-                "steps",
-            ],
-        )
+        steps = self._first_number(stats, ["totalSteps", "steps"])
 
         if steps is None:
             steps = self._extract_steps_from_activities(activities)
@@ -250,20 +258,47 @@ class GarminService:
         if resting_hr is None:
             resting_hr = self._extract_resting_hr_from_activities(activities)
 
-        summary = {
-            "total_sessions": len(normalized_activities),
-            "total_duration_min": round(total_duration_min, 1),
-            "total_distance_km": round(total_distance_km, 2),
-            "total_internal_load": round(total_internal_load, 1),
+        main_date = raw.get("date")
 
+        if main_date not in days:
+            days[main_date] = {
+                "date": main_date,
+                "sessions": [],
+                "summary": {
+                    "total_sessions": 0,
+                    "total_duration_min": 0,
+                    "total_distance_km": 0,
+                    "total_internal_load": 0,
+                },
+            }
+
+        for day in days.values():
+            day["summary"]["total_duration_min"] = round(
+                day["summary"]["total_duration_min"], 1
+            )
+            day["summary"]["total_distance_km"] = round(
+                day["summary"]["total_distance_km"], 2
+            )
+            day["summary"]["total_internal_load"] = round(
+                day["summary"]["total_internal_load"], 1
+            )
+
+        today_summary = days[main_date]["summary"]
+
+        summary = {
+            "total_sessions": today_summary["total_sessions"],
+            "total_duration_min": today_summary["total_duration_min"],
+            "total_distance_km": today_summary["total_distance_km"],
+            "total_internal_load": today_summary["total_internal_load"],
             "sleepMinutes": sleep_minutes or 0,
             "hrv": hrv or 0,
             "restingHeartRate": round(resting_hr) if resting_hr is not None else 0,
             "stress": round(stress) if stress is not None else 0,
             "bodyBattery": round(body_battery) if body_battery is not None else 0,
             "steps": round(steps) if steps is not None else 0,
-
-            "body_battery_current": round(body_battery) if body_battery is not None else 0,
+            "body_battery_current": round(body_battery)
+            if body_battery is not None
+            else 0,
             "resting_hr": round(resting_hr) if resting_hr is not None else 0,
             "avg_stress": round(stress) if stress is not None else 0,
         }
@@ -273,7 +308,8 @@ class GarminService:
             "source": "garmin",
             "date": raw.get("date"),
             "summary": summary,
-            "sessions": normalized_activities,
+            "sessions": days[main_date]["sessions"],
+            "days": list(days.values()),
             "debug_sources": {
                 "has_stats": bool(stats),
                 "has_sleep_data": bool(sleep_data),
