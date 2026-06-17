@@ -43,22 +43,44 @@ class GarminService:
 
         return self.clients[athlete_id]
 
-    def sync(self, athlete_id: str, target_date: str | None = None):
-        client = self.login(athlete_id)
+        def sync(self, athlete_id: str, target_date: str | None = None):
+         client = self.login(athlete_id)
 
         today = target_date or date.today().strftime("%Y-%m-%d")
 
         athlete_dir = ATHLETES_DIR / athlete_id
         activities_dir = athlete_dir / "activities"
-
         activities_dir.mkdir(parents=True, exist_ok=True)
 
         print(f"\n📡 Sincronizando Garmin para atleta: {athlete_id}")
         print(f"   Fecha: {today}")
 
         try:
-            activities = client.get_activities(0, 5)
-            print(f"   ✅ Actividades obtenidas: {len(activities)}")
+            activities_raw = client.get_activities(0, 30)
+            activities = []
+
+            for activity in activities_raw:
+                print(
+                    "🔎 ACTIVITY:",
+                    activity.get("activityName"),
+                    activity.get("activityType", {}),
+                    activity.get("startTimeLocal"),
+                    activity.get("duration"),
+                    activity.get("distance"),
+                )
+
+                start = (
+                    activity.get("startTimeLocal")
+                    or activity.get("startTimeGMT")
+                    or activity.get("startTime")
+                    or ""
+                )
+
+                if str(start).startswith(today):
+                    activities.append(activity)
+
+            print(f"   ✅ Actividades obtenidas para {today}: {len(activities)}")
+
         except Exception as e:
             print(f"   ❌ ERROR activities: {e}")
             activities = []
@@ -109,7 +131,6 @@ class GarminService:
             "stress_data": stress_data,
             "body_battery_data": body_battery_data,
         }
-
     def get_normalized(self, athlete_id: str, target_date: str | None = None):
         raw = self.sync(athlete_id, target_date)
 
