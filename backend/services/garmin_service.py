@@ -43,8 +43,8 @@ class GarminService:
 
         return self.clients[athlete_id]
 
-        def sync(self, athlete_id: str, target_date: str | None = None):
-         client = self.login(athlete_id)
+    def sync(self, athlete_id: str, target_date: str | None = None):
+        client = self.login(athlete_id)
 
         today = target_date or date.today().strftime("%Y-%m-%d")
 
@@ -87,7 +87,10 @@ class GarminService:
 
         try:
             stats = client.get_stats(today)
-            print(f"   ✅ Stats obtenidos: {list(stats.keys()) if stats else 'None'}")
+            print(
+                f"   ✅ Stats obtenidos: "
+                f"{list(stats.keys()) if isinstance(stats, dict) else 'OK'}"
+            )
         except Exception as e:
             print(f"   ❌ ERROR stats: {e}")
             stats = {}
