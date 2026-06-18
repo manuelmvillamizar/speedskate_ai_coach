@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import 'adaptive_response_memory.dart';
 import 'adaptive_response_memory_storage_service.dart';
 import 'athlete_context_service.dart';
+import 'athlete_weight_history_service.dart';
 import 'athlete_physiology_profile.dart';
 import 'app_language.dart';
 import 'app_text.dart';
@@ -74,7 +75,9 @@ class _LearningTrendsDashboardScreenState
   }
 
   Future<List<DailyAthleteLog>> _loadAthleteLogs() async {
-    final athleteId = context.read<AthleteContextService>().activeAthleteId;
+    final athleteContext = context.read<AthleteContextService>();
+
+    final athleteId = athleteContext.activeAthleteId;
 
     if (athleteId == null) return [];
 
@@ -83,7 +86,41 @@ class _LearningTrendsDashboardScreenState
     final sorted = List<DailyAthleteLog>.from(logs)
       ..sort((a, b) => a.date.compareTo(b.date));
 
-    return sorted;
+    if (sorted.isNotEmpty) {
+      return sorted;
+    }
+
+    final wearableHistory = athleteContext.wearableHistory;
+
+    if (wearableHistory.isEmpty) {
+      return [];
+    }
+
+    final readiness =
+        athleteContext.activeHybridReadiness?.score ??
+        athleteContext.activeReadinessScore;
+
+    final syntheticLogs = wearableHistory.map((wearable) {
+      return DailyAthleteLog(
+        athleteId: athleteId,
+        date: wearable.date,
+        performedSessionType: 'wearable_import',
+        performedLoad: wearable.trainingLoad.round(),
+        performedMinutes: wearable.totalTrainingMinutes.round(),
+        performedKm: wearable.totalDistanceKm,
+        completedAsPlanned: true,
+        readiness: readiness,
+        hrv: wearable.hrv.toDouble(),
+        sleepHours: wearable.sleepHours,
+        stressLevel: wearable.stress.toDouble(),
+        soreness: 3,
+        rpe: 5,
+      );
+    }).toList();
+
+    syntheticLogs.sort((a, b) => a.date.compareTo(b.date));
+
+    return syntheticLogs;
   }
 
   Future<Map<String, dynamic>> _loadSportsTranslations() async {
@@ -201,70 +238,6 @@ class _LearningTrendsDashboardScreenState
           _buildAthleteEvolutionDashboard(lang),
 
           const SizedBox(height: 18),
-
-          _buildRecoveryFatigueSection(lang, _profile, _memory),
-
-          const SizedBox(height: 18),
-
-          _buildCapacityEvolutionSection(lang, _profile),
-
-          const SizedBox(height: 18),
-
-          _buildCompetitiveProjectionSection(lang, _profile),
-
-          const SizedBox(height: 18),
-
-          const Text(
-            'Lectura deportiva actual',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 4),
-          const Text(
-            'La app traduce los datos del atleta a señales simples para el entrenador.',
-            style: TextStyle(fontSize: 13, color: Colors.white60),
-          ),
-          const SizedBox(height: 14),
-
-          FutureBuilder<Map<String, dynamic>>(
-            future: _loadSportsTranslations(),
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return const _DarkCard(
-                  child: Center(child: CircularProgressIndicator()),
-                );
-              }
-
-              if (!snapshot.hasData || snapshot.data == null) {
-                return const _InfoCard(
-                  text:
-                      'Conecta un wearable y registra entrenamientos para ver la lectura deportiva.',
-                );
-              }
-
-              final data = snapshot.data!;
-              final interpretations =
-                  data['interpretations'] as List<SportsMetricInterpretation>;
-
-              if (interpretations.isEmpty) {
-                return const _InfoCard(
-                  text:
-                      'Aún no hay datos suficientes. Registra días de entrenamiento para construir tendencia.',
-                );
-              }
-
-              return Column(
-                children: interpretations
-                    .map((interp) => _SportsMetricCard(interpretation: interp))
-                    .toList(),
-              );
-            },
-          ),
-
-          const SizedBox(height: 18),
         ],
       ),
     );
@@ -310,6 +283,64 @@ class _LearningTrendsDashboardScreenState
         final load28 = _sumInt(last28, (log) => log.performedLoad);
         final km7 = _sumDouble(last7, (log) => log.performedKm);
         final km28 = _sumDouble(last28, (log) => log.performedKm);
+        final today = DateTime(now.year, now.month, now.day);
+
+        final todayLogs = logs.where((log) {
+          return log.date.year == today.year &&
+              log.date.month == today.month &&
+              log.date.day == today.day;
+        }).toList();
+        print('TODAY LOGS: ${todayLogs.length}');
+        print('LAST7: ${last7.length}');
+        print('LAST28: ${last28.length}');
+
+        for (final log in todayLogs) {
+          print(
+            '${log.date} km:${log.performedKm} min:${log.performedMinutes}',
+          );
+        }
+
+        final minutesToday = _sumInt(todayLogs, (log) => log.performedMinutes);
+        final kmToday = _sumDouble(todayLogs, (log) => log.performedKm);
+        final z1Today = _sumInt(todayLogs, (log) => log.zone1Minutes);
+        final z2Today = _sumInt(todayLogs, (log) => log.zone2Minutes);
+        final z3Today = _sumInt(todayLogs, (log) => log.zone3Minutes);
+        final z4Today = _sumInt(todayLogs, (log) => log.zone4Minutes);
+        final z5Today = _sumInt(todayLogs, (log) => log.zone5Minutes);
+
+        final z1Week = _sumInt(last7, (log) => log.zone1Minutes);
+        final z2Week = _sumInt(last7, (log) => log.zone2Minutes);
+        final z3Week = _sumInt(last7, (log) => log.zone3Minutes);
+        final z4Week = _sumInt(last7, (log) => log.zone4Minutes);
+        final z5Week = _sumInt(last7, (log) => log.zone5Minutes);
+
+        final z1Month = _sumInt(last28, (log) => log.zone1Minutes);
+        final z2Month = _sumInt(last28, (log) => log.zone2Minutes);
+        final z3Month = _sumInt(last28, (log) => log.zone3Minutes);
+        final z4Month = _sumInt(last28, (log) => log.zone4Minutes);
+        final z5Month = _sumInt(last28, (log) => log.zone5Minutes);
+        final muscleWeek = last7.fold<double>(
+          0,
+          (sum, log) => sum + log.muscleStress,
+        );
+
+        final tendonWeek = last7.fold<double>(
+          0,
+          (sum, log) => sum + log.tendonStress,
+        );
+
+        final neuralWeek = last7.fold<double>(
+          0,
+          (sum, log) => sum + log.neuralStress,
+        );
+
+        final mechanicalWeek = last7.fold<double>(
+          0,
+          (sum, log) => sum + log.mechanicalStress,
+        );
+
+        final forceTotal =
+            muscleWeek + tendonWeek + neuralWeek + mechanicalWeek;
         final avgAvailability7 = _avgInt(last7, (log) => log.readiness);
         final avgRpe7 = _avgInt(last7, (log) => log.rpe);
         final avgSoreness7 = _avgInt(last7, (log) => log.soreness);
@@ -328,17 +359,30 @@ class _LearningTrendsDashboardScreenState
             .toSet()
             .length;
         final consistency28 = activeDays28 / 28;
-
         final weeklyMinutes = _buildWeeklySeries(
           logs: logs,
           weeks: 6,
           pick: (log) => log.performedMinutes.toDouble(),
         );
-
         final weeklyLoad = _buildWeeklySeries(
           logs: logs,
           weeks: 6,
           pick: (log) => log.performedLoad.toDouble(),
+        );
+        final weeklyHighIntensity = _buildWeeklySeries(
+          logs: logs,
+          weeks: 6,
+          pick: (log) => log.highIntensityMinutes.toDouble(),
+        );
+
+        final weeklyStrength = _buildWeeklySeries(
+          logs: logs,
+          weeks: 6,
+          pick: (log) =>
+              log.muscleStress +
+              log.mechanicalStress +
+              log.tendonStress +
+              log.neuralStress,
         );
 
         final weeklyAvailability = _buildWeeklyAverageSeries(
@@ -346,15 +390,6 @@ class _LearningTrendsDashboardScreenState
           weeks: 6,
           pick: (log) => log.readiness.toDouble(),
         );
-
-        final radarValues = [
-          _normalize(minutes28.toDouble(), 900),
-          _normalize(load28.toDouble(), 900),
-          _normalize(km28, 120),
-          consistency28.clamp(0.0, 1.0),
-          _normalize(avgAvailability7.toDouble(), 100),
-          (1.0 - _normalize(avgSoreness7.toDouble(), 10)).clamp(0.0, 1.0),
-        ];
 
         return _DarkCard(
           child: Column(
@@ -379,164 +414,72 @@ class _LearningTrendsDashboardScreenState
                 style: const TextStyle(color: Colors.white60),
               ),
               const SizedBox(height: 18),
-
-              Row(
-                children: [
-                  Expanded(
-                    child: _EvolutionStatCard(
-                      title: 'Trabajo 7 días',
-                      value: '$minutes7',
-                      unit: 'min',
-                      icon: Icons.timer,
-                      color: Colors.blue,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: _EvolutionStatCard(
-                      title: 'Exigencia semanal',
-                      value: '$load7',
-                      unit: 'pts',
-                      icon: Icons.bolt,
-                      color: Colors.orange,
-                    ),
-                  ),
-                ],
+              Text(
+                'DEBUG: hoy ${todayLogs.length} registros · 7d ${last7.length} · 28d ${last28.length}',
+                style: const TextStyle(color: Colors.redAccent),
               ),
+              ...todayLogs.map((log) {
+                return Text(
+                  'HOY: ${log.date} · tipo: ${log.performedSessionType} · km: ${log.performedKm} · min: ${log.performedMinutes}',
+                  style: const TextStyle(color: Colors.redAccent, fontSize: 11),
+                );
+              }),
 
-              const SizedBox(height: 10),
-
-              Row(
-                children: [
-                  Expanded(
-                    child: _EvolutionStatCard(
-                      title: 'Km 7 días',
-                      value: km7.toStringAsFixed(1),
-                      unit: 'km',
-                      icon: Icons.route,
-                      color: Colors.green,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: _EvolutionStatCard(
-                      title: 'Registros 28 días',
-                      value: '${last28.length}',
-                      unit: 'días',
-                      icon: Icons.event_available,
-                      color: Colors.purple,
-                    ),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 18),
-
-              _EvolutionRadarCard(
-                values: radarValues,
-                labels: const [
-                  'Trabajo',
-                  'Carga',
-                  'Km',
-                  'Constancia',
-                  'Disponibilidad',
-                  'Recuperación',
-                ],
-              ),
-
-              const SizedBox(height: 18),
-
-              _EvolutionBar(
-                title: 'Constancia últimos 28 días',
-                value: consistency28,
-                label: '${(consistency28 * 100).round()}%',
-                color: Colors.green,
-              ),
-              _EvolutionBar(
-                title: 'Plan cumplido últimos 28 días',
-                value: compliance28,
-                label: '${(compliance28 * 100).round()}%',
-                color: Colors.blue,
-              ),
-              _EvolutionBar(
-                title: 'Disponibilidad últimos 7 días',
-                value: _normalize(avgAvailability7.toDouble(), 100),
-                label: _availabilityLabel(avgAvailability7),
-                color: Colors.teal,
-              ),
-              _EvolutionBar(
-                title: 'Control de fatiga/dolor',
-                value: (1.0 - _normalize(avgSoreness7.toDouble(), 10)).clamp(
-                  0.0,
-                  1.0,
-                ),
-                label: _fatigueLabel(avgSoreness7),
-                color: Colors.amber,
-              ),
-
-              const SizedBox(height: 22),
-
-              _WeeklyLineChart(
-                title: 'Trabajo semanal',
-                values: weeklyMinutes,
-                color: Colors.blue,
-                unit: 'min',
-              ),
-
-              _WeeklyLineChart(
-                title: 'Exigencia semanal',
-                values: weeklyLoad,
-                color: Colors.orange,
-                unit: 'pts',
-              ),
-
-              _WeeklyLineChart(
-                title: 'Disponibilidad semanal',
-                values: weeklyAvailability,
-                color: Colors.green,
-                unit: '%',
-              ),
-
-              const SizedBox(height: 12),
-
-              Wrap(
-                spacing: 10,
-                runSpacing: 10,
-                children: [
-                  if (consistency28 >= 0.5)
-                    const _StatusBadge(
-                      label: 'Constancia alta',
-                      color: Colors.green,
-                    ),
-                  if (load7 > 350)
-                    const _StatusBadge(
-                      label: 'Semana exigente',
-                      color: Colors.blue,
-                    ),
-                  if (avgSoreness7 <= 4)
-                    const _StatusBadge(
-                      label: 'Fatiga controlada',
-                      color: Colors.orange,
-                    ),
-                  if (avgAvailability7 < 65)
-                    const _StatusBadge(
-                      label: 'Recuperación en observación',
-                      color: Colors.amber,
-                    ),
-                ],
-              ),
-
-              const SizedBox(height: 18),
-
-              _EvolutionSummaryBox(
-                minutes28: minutes28,
-                load28: load28,
+              const SizedBox(height: 8),
+              _EvolutionVolumeCabinCard(
+                kmToday: kmToday,
+                minutesToday: minutesToday,
+                km7: km7,
+                minutes7: minutes7,
                 km28: km28,
-                avgRpe7: avgRpe7,
+                minutes28: minutes28,
+              ),
+
+              const SizedBox(height: 18),
+              _EvolutionIntensityCard(
+                z1Today: z1Today,
+                z2Today: z2Today,
+                z3Today: z3Today,
+                z4Today: z4Today,
+                z5Today: z5Today,
+                z1Week: z1Week,
+                z2Week: z2Week,
+                z3Week: z3Week,
+                z4Week: z4Week,
+                z5Week: z5Week,
+                z1Month: z1Month,
+                z2Month: z2Month,
+                z3Month: z3Month,
+                z4Month: z4Month,
+                z5Month: z5Month,
+              ),
+
+              const SizedBox(height: 18),
+              _EvolutionStrengthCard(
+                muscleWeek: muscleWeek,
+                tendonWeek: tendonWeek,
+                neuralWeek: neuralWeek,
+                mechanicalWeek: mechanicalWeek,
+                total: forceTotal,
+              ),
+
+              const SizedBox(height: 18),
+              _buildWeightPerformanceSection(
                 avgAvailability7: avgAvailability7,
                 avgSoreness7: avgSoreness7,
-                consistency28: consistency28,
+                load28: load28,
+                km28: km28,
               ),
+
+              const SizedBox(height: 18),
+              _AthleteTrendChart(
+                weeklyVolume: weeklyMinutes,
+                weeklyIntensity: weeklyHighIntensity,
+                weeklyStrength: weeklyStrength,
+                weeklyAvailability: weeklyAvailability,
+              ),
+
+              const SizedBox(height: 18),
             ],
           ),
         );
@@ -625,6 +568,262 @@ class _LearningTrendsDashboardScreenState
       return weekLogs.fold<double>(0, (sum, log) => sum + pick(log)) /
           weekLogs.length;
     });
+  }
+
+  Future<List<WeightHistoryEntry>> _loadWeightEntries() async {
+    final athleteContext = context.read<AthleteContextService>();
+    final athleteId = athleteContext.activeAthleteId;
+
+    if (athleteId == null) return [];
+
+    return AthleteWeightHistoryService.getEntriesForAthlete(athleteId);
+  }
+
+  double? _weightChangeSince(List<WeightHistoryEntry> entries, int days) {
+    if (entries.length < 2) return null;
+
+    final latest = entries.first;
+    final targetDate = latest.date.subtract(Duration(days: days));
+
+    WeightHistoryEntry? reference;
+
+    for (final entry in entries) {
+      final sameDay =
+          entry.date.year == targetDate.year &&
+          entry.date.month == targetDate.month &&
+          entry.date.day == targetDate.day;
+
+      if (entry.date.isBefore(targetDate) || sameDay) {
+        reference = entry;
+        break;
+      }
+    }
+
+    reference ??= entries.last;
+
+    return latest.weightKg - reference.weightKg;
+  }
+
+  String _weightTrendLabel(double? change28) {
+    if (change28 == null) return 'Sin tendencia';
+
+    if (change28.abs() < 0.5) return 'Estable';
+    if (change28 >= 2.0) return 'Subiendo rápido';
+    if (change28 > 0.5) return 'Subiendo';
+    if (change28 <= -2.0) return 'Bajando rápido';
+    return 'Bajando progresivo';
+  }
+
+  Color _weightTrendColor(double? change28) {
+    if (change28 == null) return Colors.white54;
+    if (change28.abs() < 0.5) return Colors.green;
+    if (change28.abs() >= 2.0) return Colors.orange;
+    return Colors.blue;
+  }
+
+  String _weightCoachReading({
+    required double? change7,
+    required double? change28,
+    required double avgAvailability7,
+    required double avgSoreness7,
+    required int load28,
+    required double km28,
+  }) {
+    if (change28 == null) {
+      return 'Registra varias mediciones semanales para relacionar peso, carga y respuesta del atleta.';
+    }
+
+    final losingFast = change28 <= -2.0 || (change7 != null && change7 <= -1.0);
+    final gainingFast = change28 >= 2.0 || (change7 != null && change7 >= 1.0);
+    final lowAvailability = avgAvailability7 > 0 && avgAvailability7 < 65;
+    final highFatigue = avgSoreness7 >= 6;
+    final highLoad = load28 >= 900 || km28 >= 80;
+
+    if (losingFast && (lowAvailability || highFatigue)) {
+      return 'Pérdida rápida de peso con señales de fatiga o baja disponibilidad. Revisar recuperación, alimentación y carga antes de exigir más.';
+    }
+
+    if (losingFast && highLoad) {
+      return 'El peso baja rápido durante una fase de carga alta. Vigilar energía disponible, recuperación y calidad técnica.';
+    }
+
+    if (change28 < -0.5 && avgAvailability7 >= 70 && avgSoreness7 <= 4) {
+      return 'Descenso progresivo con buena disponibilidad. La adaptación parece controlada.';
+    }
+
+    if (gainingFast && lowAvailability) {
+      return 'Subida rápida de peso junto con menor disponibilidad. Observar sensación de piernas, descanso y respuesta al volumen.';
+    }
+
+    if (change28.abs() < 0.5 && avgAvailability7 >= 70) {
+      return 'Peso estable con buena disponibilidad. La composición corporal parece compatible con la carga actual.';
+    }
+
+    if (highLoad && change28.abs() < 1.0) {
+      return 'Peso estable mientras sostiene carga. Buena señal de tolerancia al volumen actual.';
+    }
+
+    return 'Tendencia corporal en observación. Comparar próximas mediciones con disponibilidad, fatiga y rendimiento.';
+  }
+
+  Widget _buildWeightPerformanceSection({
+    required double avgAvailability7,
+    required double avgSoreness7,
+    required int load28,
+    required double km28,
+  }) {
+    return FutureBuilder<List<WeightHistoryEntry>>(
+      future: _loadWeightEntries(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.04),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: Colors.white10),
+            ),
+            child: const Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        final entries = snapshot.data ?? [];
+
+        if (entries.isEmpty) {
+          return Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.04),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: Colors.white10),
+            ),
+            child: const Text(
+              'Composición corporal: registra el peso semanal desde Perfil para analizar su relación con carga, fatiga y disponibilidad.',
+              style: TextStyle(color: Colors.white70),
+            ),
+          );
+        }
+
+        final latest = entries.first;
+        final change7 = _weightChangeSince(entries, 7);
+        final change28 = _weightChangeSince(entries, 28);
+        final trendLabel = _weightTrendLabel(change28);
+        final trendColor = _weightTrendColor(change28);
+
+        final reading = _weightCoachReading(
+          change7: change7,
+          change28: change28,
+          avgAvailability7: avgAvailability7,
+          avgSoreness7: avgSoreness7,
+          load28: load28,
+          km28: km28,
+        );
+
+        return Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.04),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: Colors.white10),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Composición corporal y rendimiento',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 17,
+                ),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Relación entre peso semanal, disponibilidad, fatiga y carga.',
+                style: TextStyle(color: Colors.white60, fontSize: 12),
+              ),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Expanded(
+                    child: _EvolutionStatCard(
+                      title: 'Peso actual',
+                      value: latest.weightKg.toStringAsFixed(1),
+                      unit: 'kg',
+                      icon: Icons.monitor_weight,
+                      color: Colors.teal,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _EvolutionStatCard(
+                      title: 'Tendencia',
+                      value: trendLabel,
+                      unit: '',
+                      icon: Icons.trending_up,
+                      color: trendColor,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: _EvolutionStatCard(
+                      title: 'Cambio 7 días',
+                      value: change7 == null
+                          ? '—'
+                          : '${change7 >= 0 ? '+' : ''}${change7.toStringAsFixed(1)}',
+                      unit: change7 == null ? '' : 'kg',
+                      icon: Icons.calendar_view_week,
+                      color: Colors.blue,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _EvolutionStatCard(
+                      title: 'Cambio 28 días',
+                      value: change28 == null
+                          ? '—'
+                          : '${change28 >= 0 ? '+' : ''}${change28.toStringAsFixed(1)}',
+                      unit: change28 == null ? '' : 'kg',
+                      icon: Icons.timeline,
+                      color: trendColor,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: trendColor.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: trendColor.withOpacity(0.24)),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.psychology, color: trendColor),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        reading,
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          height: 1.35,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   String _availabilityLabel(double value) {
@@ -1198,6 +1397,366 @@ class _DevelopmentBar extends StatelessWidget {
   }
 }
 
+class _EvolutionVolumeCabinCard extends StatelessWidget {
+  final double kmToday;
+  final int minutesToday;
+  final double km7;
+  final int minutes7;
+  final double km28;
+  final int minutes28;
+
+  const _EvolutionVolumeCabinCard({
+    required this.kmToday,
+    required this.minutesToday,
+    required this.km7,
+    required this.minutes7,
+    required this.km28,
+    required this.minutes28,
+  });
+
+  Color get color {
+    if (minutes7 >= 900 || km7 >= 160) return Colors.red;
+    if (minutes7 >= 700 || km7 >= 120) return Colors.orange;
+    if (minutes7 >= 550 || km7 >= 90) return Colors.amber;
+    return Colors.blue;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: color.withOpacity(0.13),
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: BorderSide(color: color.withOpacity(0.28)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                CircleAvatar(
+                  backgroundColor: color.withOpacity(0.18),
+                  child: Icon(Icons.route, color: color),
+                ),
+                const SizedBox(width: 12),
+                const Text(
+                  'Volumen',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 21,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  child: _EvolutionMiniBox(
+                    title: 'Hoy',
+                    value:
+                        '${kmToday.toStringAsFixed(1)} km\n$minutesToday min',
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _EvolutionMiniBox(
+                    title: 'Semana',
+                    value: '${km7.toStringAsFixed(1)} km\n$minutes7 min',
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _EvolutionMiniBox(
+                    title: 'Mes',
+                    value: '${km28.toStringAsFixed(1)} km\n$minutes28 min',
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _EvolutionMiniBox extends StatelessWidget {
+  final String title;
+  final String value;
+
+  const _EvolutionMiniBox({required this.title, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(minHeight: 86),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.18),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: const TextStyle(color: Colors.white60)),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+              height: 1.3,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EvolutionIntensityCard extends StatelessWidget {
+  final int z1Today;
+  final int z2Today;
+  final int z3Today;
+  final int z4Today;
+  final int z5Today;
+
+  final int z1Week;
+  final int z2Week;
+  final int z3Week;
+  final int z4Week;
+  final int z5Week;
+
+  final int z1Month;
+  final int z2Month;
+  final int z3Month;
+  final int z4Month;
+  final int z5Month;
+
+  const _EvolutionIntensityCard({
+    required this.z1Today,
+    required this.z2Today,
+    required this.z3Today,
+    required this.z4Today,
+    required this.z5Today,
+    required this.z1Week,
+    required this.z2Week,
+    required this.z3Week,
+    required this.z4Week,
+    required this.z5Week,
+    required this.z1Month,
+    required this.z2Month,
+    required this.z3Month,
+    required this.z4Month,
+    required this.z5Month,
+  });
+
+  Widget _row(String title, int a, int b, int c) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 40,
+            child: Text(
+              title,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              '$a min',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white70),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              '$b min',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white70),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              '$c min',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white70),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.blue.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.blue.withOpacity(0.20)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Intensidad',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          const Row(
+            children: [
+              SizedBox(width: 40),
+              Expanded(
+                child: Center(
+                  child: Text('Hoy', style: TextStyle(color: Colors.white60)),
+                ),
+              ),
+              Expanded(
+                child: Center(
+                  child: Text(
+                    'Semana',
+                    style: TextStyle(color: Colors.white60),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Center(
+                  child: Text('Mes', style: TextStyle(color: Colors.white60)),
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 8),
+
+          _row('Z1', z1Today, z1Week, z1Month),
+          _row('Z2', z2Today, z2Week, z2Month),
+          _row('Z3', z3Today, z3Week, z3Month),
+          _row('Z4', z4Today, z4Week, z4Month),
+          _row('Z5', z5Today, z5Week, z5Month),
+        ],
+      ),
+    );
+  }
+}
+
+class _EvolutionStrengthCard extends StatelessWidget {
+  final double muscleWeek;
+  final double tendonWeek;
+  final double neuralWeek;
+  final double mechanicalWeek;
+  final double total;
+
+  const _EvolutionStrengthCard({
+    required this.muscleWeek,
+    required this.tendonWeek,
+    required this.neuralWeek,
+    required this.mechanicalWeek,
+    required this.total,
+  });
+
+  double _pct(double value) {
+    if (total <= 0) return 0;
+    return (value / total) * 100;
+  }
+
+  Color get cardColor {
+    if (total >= 1200) return Colors.red;
+    if (total >= 900) return Colors.orange;
+    if (total >= 600) return Colors.amber;
+    return Colors.blue;
+  }
+
+  Widget _bar(String label, double percent) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(label, style: const TextStyle(color: Colors.white)),
+              ),
+              Text(
+                '${percent.toStringAsFixed(0)}%',
+                style: const TextStyle(color: Colors.white70),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          LinearProgressIndicator(
+            value: (percent / 100).clamp(0.0, 1.0),
+            minHeight: 8,
+            backgroundColor: Colors.white12,
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final musclePct = _pct(muscleWeek);
+    final tendonPct = _pct(tendonWeek);
+    final neuralPct = _pct(neuralWeek);
+    final mechanicalPct = _pct(mechanicalWeek);
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: cardColor.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: cardColor.withOpacity(0.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Fuerza específica',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+
+          const SizedBox(height: 12),
+
+          Text(
+            'Carga semanal: ${total.toStringAsFixed(0)}',
+            style: const TextStyle(color: Colors.white70),
+          ),
+
+          const SizedBox(height: 12),
+
+          _bar('Muscular', musclePct),
+          _bar('Mecánica', mechanicalPct),
+          _bar('Tendón', tendonPct),
+          _bar('Neural', neuralPct),
+        ],
+      ),
+    );
+  }
+}
+
 class _EvolutionStatCard extends StatelessWidget {
   final String title;
   final String value;
@@ -1572,6 +2131,185 @@ class _SportsMetricCard extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _AthleteTrendChart extends StatelessWidget {
+  final List<double> weeklyVolume;
+  final List<double> weeklyIntensity;
+  final List<double> weeklyStrength;
+  final List<double> weeklyAvailability;
+
+  const _AthleteTrendChart({
+    required this.weeklyVolume,
+    required this.weeklyIntensity,
+    required this.weeklyStrength,
+    required this.weeklyAvailability,
+  });
+
+  List<double> _normalize(List<double> values) {
+    if (values.isEmpty) return [];
+
+    final maxValue = values.reduce((a, b) => a > b ? a : b);
+
+    if (maxValue <= 0) {
+      return values.map((_) => 0.0).toList();
+    }
+
+    return values.map((v) => v / maxValue).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final volume = _normalize(weeklyVolume);
+    final intensity = _normalize(weeklyIntensity);
+    final strength = _normalize(weeklyStrength);
+
+    final availability = weeklyAvailability
+        .map((e) => (e / 100).clamp(0.0, 1.0))
+        .toList();
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.04),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Tendencia del atleta',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Últimas 6 semanas',
+            style: TextStyle(color: Colors.white60, fontSize: 12),
+          ),
+          const SizedBox(height: 14),
+
+          SizedBox(
+            height: 180,
+            child: CustomPaint(
+              painter: _MultiTrendPainter(
+                volume: volume,
+                intensity: intensity,
+                strength: strength,
+                availability: availability,
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 14),
+
+          const Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            children: [
+              _TrendLegend(color: Colors.blue, label: 'Volumen'),
+              _TrendLegend(color: Colors.orange, label: 'Intensidad'),
+              _TrendLegend(color: Colors.red, label: 'Fuerza'),
+              _TrendLegend(color: Colors.green, label: 'Disponibilidad'),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TrendLegend extends StatelessWidget {
+  final Color color;
+  final String label;
+
+  const _TrendLegend({required this.color, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 5),
+        Text(label, style: const TextStyle(color: Colors.white70)),
+      ],
+    );
+  }
+}
+
+class _MultiTrendPainter extends CustomPainter {
+  final List<double> volume;
+  final List<double> intensity;
+  final List<double> strength;
+  final List<double> availability;
+
+  _MultiTrendPainter({
+    required this.volume,
+    required this.intensity,
+    required this.strength,
+    required this.availability,
+  });
+
+  void _drawSeries(Canvas canvas, Size size, List<double> values, Color color) {
+    if (values.length < 2) return;
+
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 3
+      ..style = PaintingStyle.stroke;
+
+    final path = Path();
+
+    for (int i = 0; i < values.length; i++) {
+      final x = size.width * i / (values.length - 1);
+      final y = size.height - (values[i] * size.height);
+
+      if (i == 0) {
+        path.moveTo(x, y);
+      } else {
+        path.lineTo(x, y);
+      }
+
+      canvas.drawCircle(Offset(x, y), 3, Paint()..color = color);
+    }
+
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final grid = Paint()
+      ..color = Colors.white10
+      ..strokeWidth = 1;
+
+    for (int i = 0; i <= 4; i++) {
+      final y = size.height * i / 4;
+
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
+    }
+
+    _drawSeries(canvas, size, volume, Colors.blue);
+
+    _drawSeries(canvas, size, intensity, Colors.orange);
+
+    _drawSeries(canvas, size, strength, Colors.red);
+
+    _drawSeries(canvas, size, availability, Colors.green);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) {
+    return true;
   }
 }
 

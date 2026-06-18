@@ -51,7 +51,7 @@ class DailyAITrainingScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final lang = context.watch<AppLanguageNotifier>().current;
-    final athleteContext = context.watch<AthleteContextService>();
+    final athleteContext = context.read<AthleteContextService>();
     final athlete = athleteContext.activeAthlete;
 
     if (athlete == null) {
@@ -312,7 +312,7 @@ class _CoachActionStrip extends StatelessWidget {
               children: [
                 Icon(
                   alreadySent ? Icons.check_circle : Icons.pending_actions,
-                  color: alreadySent ? Colors.green : Colors.blue,
+                  color: const Color(0xFF111827),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -349,25 +349,30 @@ class _CoachActionStrip extends StatelessWidget {
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: () {
-                      service.saveDraft(athleteId: athleteId, day: day);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Plan diario guardado.')),
+                    onPressed: () async {
+                      await service.saveDraft(athleteId: athleteId, day: day);
+                      await service.sendToday(athleteId);
+
+                      final bytes = await DailyTrainingPdfGenerator.generate(
+                        athlete: athlete,
+                        day: day,
+                        state: state,
+                        profile: profile,
+                        logs: logs,
+                        intervention: intervention,
                       );
-                    },
-                    icon: const Icon(Icons.save),
-                    label: const Text('Guardar'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: () {
-                      service.saveDraft(athleteId: athleteId, day: day);
-                      service.sendToday(athleteId);
+
+                      await Printing.sharePdf(
+                        bytes: bytes,
+                        filename:
+                            'entrenamiento_${athlete.name}_${day.date.day}_${day.date.month}_${day.date.year}.pdf',
+                      );
+
+                      if (!context.mounted) return;
+
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
-                          content: Text('Entrenamiento enviado al atleta.'),
+                          content: Text('Plan listo para compartir.'),
                         ),
                       );
                     },
@@ -753,7 +758,6 @@ class _SimpleDaySummary extends StatelessWidget {
       if (day.hasDoubleSession) 'Doble sesión',
       if (day.hasStrengthAndSkating) 'Fuerza + patines',
       if (day.hasRecoveryBlock) 'Recuperación incluida',
-      if (day.wasModifiedByCoach) 'Ajustado por entrenador',
     ];
 
     return Card(

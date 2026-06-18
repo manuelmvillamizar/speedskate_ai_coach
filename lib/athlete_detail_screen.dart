@@ -14,6 +14,7 @@ import 'training_log_screen.dart';
 import 'learning_trends_dashboard_screen.dart';
 import 'training_log_alerts_screen.dart';
 import 'wearable_integration_service.dart';
+import 'athlete_weight_history_service.dart';
 
 class AthleteDetailHubScreen extends StatefulWidget {
   final AthleteProgramProfile athlete;
@@ -251,6 +252,8 @@ class _SummaryTab extends StatelessWidget {
           title: 'Disponibilidad',
           value: dailyState != null
               ? '${dailyState.readiness}'
+              : athleteContext.activeReadinessScore <= 0
+              ? 'Sin datos'
               : '${athleteContext.activeReadinessScore}',
           icon: Icons.favorite,
         ),
@@ -425,6 +428,38 @@ class _ProfileTab extends StatelessWidget {
                 title: 'Nivel',
                 value: level,
               ),
+              const Divider(height: 1),
+              _ProfileTile(
+                icon: Icons.monitor_weight,
+                title: 'Peso',
+                value: '${updatedAthlete.weightKg.toStringAsFixed(1)} kg',
+              ),
+              const Divider(height: 1),
+              _WeightHistoryCard(athlete: updatedAthlete),
+              const Divider(height: 1),
+              _ProfileTile(
+                icon: Icons.height,
+                title: 'Estatura',
+                value: updatedAthlete.heightCm > 0
+                    ? '${updatedAthlete.heightCm.toStringAsFixed(1)} cm'
+                    : 'No registrada',
+              ),
+              const Divider(height: 1),
+              _ProfileTile(
+                icon: Icons.email,
+                title: 'Correo',
+                value: updatedAthlete.email.isEmpty
+                    ? 'No registrado'
+                    : updatedAthlete.email,
+              ),
+              const Divider(height: 1),
+              _ProfileTile(
+                icon: Icons.phone,
+                title: 'WhatsApp',
+                value: updatedAthlete.whatsapp.isEmpty
+                    ? 'No registrado'
+                    : updatedAthlete.whatsapp,
+              ),
             ],
           ),
         ),
@@ -480,6 +515,217 @@ class _ProfileTab extends StatelessWidget {
             );
           }),
       ],
+    );
+  }
+}
+
+class _WeightHistoryCard extends StatefulWidget {
+  final AthleteProgramProfile athlete;
+
+  const _WeightHistoryCard({required this.athlete});
+
+  @override
+  State<_WeightHistoryCard> createState() => _WeightHistoryCardState();
+}
+
+class _WeightHistoryCardState extends State<_WeightHistoryCard> {
+  List<WeightHistoryEntry> entries = [];
+  AthleteWeightSummary? summary;
+  bool loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    loadWeightHistory();
+  }
+
+  Future<void> loadWeightHistory() async {
+    final loadedEntries =
+        await AthleteWeightHistoryService.getEntriesForAthlete(
+          widget.athlete.id,
+        );
+
+    final loadedSummary = await AthleteWeightHistoryService.getSummary(
+      widget.athlete.id,
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      entries = loadedEntries;
+      summary = loadedSummary;
+      loading = false;
+    });
+  }
+
+  Future<void> registerWeight() async {
+    final controller = TextEditingController(
+      text: widget.athlete.weightKg > 0
+          ? widget.athlete.weightKg.toStringAsFixed(1)
+          : '',
+    );
+
+    final newWeight = await showDialog<double>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Registrar peso'),
+          content: TextField(
+            controller: controller,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(
+              labelText: 'Peso',
+              suffixText: 'kg',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final value = double.tryParse(
+                  controller.text.trim().replaceAll(',', '.'),
+                );
+
+                if (value == null || value <= 0) return;
+
+                Navigator.of(dialogContext).pop(value);
+              },
+              child: const Text('Guardar'),
+            ),
+          ],
+        );
+      },
+    );
+
+    controller.dispose();
+
+    if (newWeight == null) return;
+
+    await AthleteWeightHistoryService.addEntry(
+      athleteId: widget.athlete.id,
+      date: DateTime.now(),
+      weightKg: newWeight,
+    );
+
+    await AthleteProgramService.instance.updateAthleteWeight(
+      athleteId: widget.athlete.id,
+      weightKg: newWeight,
+    );
+
+    if (!mounted) return;
+
+    await loadWeightHistory();
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Peso registrado: ${newWeight.toStringAsFixed(1)} kg'),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final latest = summary?.latestEntry;
+    final change = summary?.changeLast4WeeksKg;
+
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Historial de peso',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              FilledButton.icon(
+                onPressed: registerWeight,
+                icon: const Icon(Icons.add),
+                label: const Text('Registrar peso'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (loading)
+            const Text(
+              'Cargando historial...',
+              style: TextStyle(color: Colors.white70),
+            )
+          else if (entries.isEmpty)
+            const Text(
+              'Sin registros todavía. Registra el primer peso semanal.',
+              style: TextStyle(color: Colors.white70),
+            )
+          else ...[
+            Text(
+              latest == null
+                  ? 'Última medición: no disponible'
+                  : 'Última medición: ${latest.weightKg.toStringAsFixed(1)} kg · ${_formatDate(latest.date)}',
+              style: const TextStyle(color: Colors.white70),
+            ),
+            if (change != null) ...[
+              const SizedBox(height: 6),
+              Text(
+                'Cambio últimas 4 semanas: '
+                '${change >= 0 ? '+' : ''}${change.toStringAsFixed(1)} kg',
+                style: const TextStyle(color: Colors.white70),
+              ),
+            ],
+            if (summary?.hasRapidChange == true &&
+                summary?.rapidChangeMessage != null) ...[
+              const SizedBox(height: 10),
+              _InfoBox(
+                color: Colors.orange,
+                icon: Icons.warning_amber,
+                text: summary!.rapidChangeMessage!,
+              ),
+            ],
+            const SizedBox(height: 12),
+            ...entries
+                .take(6)
+                .map(
+                  (entry) => Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.monitor_weight_outlined,
+                          color: Colors.white54,
+                          size: 18,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _formatDate(entry.date),
+                            style: const TextStyle(color: Colors.white70),
+                          ),
+                        ),
+                        Text(
+                          '${entry.weightKg.toStringAsFixed(1)} kg',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+          ],
+        ],
+      ),
     );
   }
 }

@@ -207,8 +207,27 @@ class _AthleteWearableScreenState extends State<AthleteWearableScreen> {
       }
 
       try {
+        // ✅ PASO 32 - FALLBACK INTELIGENTE PARA QUE LAS TARJETAS NO SE APAGUEN
+        final wearableService = context.read<WearableIntegrationService>();
+
+        WearableDailyData? fallbackWearable =
+            athleteContext.activeWearable ?? wearableService.today;
+
+        if (fallbackWearable == null ||
+            (fallbackWearable.hrv <= 0 &&
+                fallbackWearable.stress <= 0 &&
+                fallbackWearable.bodyBattery <= 0)) {
+          for (final item in wearableService.history.reversed) {
+            if (item.hrv > 0 || item.stress > 0 || item.bodyBattery > 0) {
+              fallbackWearable = item;
+              break;
+            }
+          }
+        }
+
         final result = await GarminBackendApiService.syncGarmin(
           athleteId: athlete.id,
+          currentToday: fallbackWearable,
           onProgress: (message) {
             if (mounted) {
               setState(() {
@@ -226,8 +245,15 @@ class _AthleteWearableScreenState extends State<AthleteWearableScreen> {
         }
 
         if (result.success && result.wearableData != null) {
-          athleteContext.setWearableData(result.wearableData!);
+          final wearableService = context.read<WearableIntegrationService>();
 
+          for (final day in result.historyData) {
+            await wearableService.setToday(
+              athleteId: athlete.id,
+              provider: 'Garmin',
+              data: day,
+            );
+          }
           final syncResult =
               await GarminContextSyncService.syncToAthleteContext(
                 athleteService: context.read<AthleteProgramService>(),
@@ -266,6 +292,7 @@ class _AthleteWearableScreenState extends State<AthleteWearableScreen> {
         'backend_tools/garmin_private_sync/garmin_sync.py',
         athlete.id,
       ], workingDirectory: Directory.current.path);
+
       if (syncResult.exitCode != 0) {
         throw Exception('Error en sync: ${syncResult.stderr}');
       }
@@ -434,7 +461,6 @@ class _AthleteWearableScreenState extends State<AthleteWearableScreen> {
   Widget build(BuildContext context) {
     final lang = context.watch<AppLanguageNotifier>().current;
     final athlete = context.watch<AthleteProgramService>().activeAthlete;
-    final wearable = context.watch<AthleteContextService>().activeWearable;
 
     if (athlete == null) {
       return Scaffold(
@@ -524,71 +550,6 @@ class _AthleteWearableScreenState extends State<AthleteWearableScreen> {
             icon: Icons.watch,
             color: Colors.green,
           ),
-          const SizedBox(height: 20),
-          if (connectedProvider != null) ...[
-            FilledButton.icon(
-              onPressed: loading ? null : syncNow,
-              icon: const Icon(Icons.sync),
-              label: Text(
-                AppText.t(
-                  lang,
-                  'Actualizar datos del deportista',
-                  'Update athlete data',
-                  'Athletendaten aktualisieren',
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: loading ? null : disconnect,
-              icon: const Icon(Icons.link_off),
-              label: Text(
-                AppText.t(lang, 'Desconectar', 'Disconnect', 'Trennen'),
-              ),
-            ),
-          ],
-          const SizedBox(height: 24),
-          if (wearable != null) ...[
-            Text(
-              AppText.t(
-                lang,
-                'Lectura del dispositivo',
-                'Device reading',
-                'Gerätedaten',
-              ),
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 12),
-            _metricCard(
-              title: AppText.t(lang, 'Recuperación', 'Recovery', 'Erholung'),
-              value: '${wearable.hrv}',
-              icon: Icons.monitor_heart,
-              color: Colors.blue,
-            ),
-            _metricCard(
-              title: AppText.t(lang, 'Sueño', 'Sleep', 'Schlaf'),
-              value: '${wearable.sleepHours.toStringAsFixed(1)} h',
-              icon: Icons.bedtime,
-              color: Colors.indigo,
-            ),
-            _metricCard(
-              title: AppText.t(lang, 'Estrés', 'Stress', 'Stress'),
-              value: '${wearable.stress}',
-              icon: Icons.psychology,
-              color: Colors.deepOrange,
-            ),
-            _metricCard(
-              title: AppText.t(
-                lang,
-                'Exigencia reciente',
-                'Recent effort',
-                'Aktuelle Belastung',
-              ),
-              value: wearable.trainingLoad.toStringAsFixed(1),
-              icon: Icons.fitness_center,
-              color: Colors.green,
-            ),
-          ],
         ],
       ),
     );
@@ -644,46 +605,29 @@ class _AthleteWearableScreenState extends State<AthleteWearableScreen> {
             SizedBox(
               width: double.infinity,
               child: FilledButton.icon(
-                onPressed: loading ? null : () => connectProvider(provider),
+                onPressed: loading
+                    ? null
+                    : selected && provider == WearableProviderType.garmin
+                    ? syncNow
+                    : () => connectProvider(provider),
                 icon: selected
                     ? const Icon(Icons.check)
                     : const Icon(Icons.link),
                 label: Text(
-                  selected
+                  selected && provider == WearableProviderType.garmin
+                      ? AppText.t(
+                          lang,
+                          'Sincronizar Garmin',
+                          'Sync Garmin',
+                          'Garmin synchronisieren',
+                        )
+                      : selected
                       ? AppText.t(lang, 'Conectado', 'Connected', 'Verbunden')
                       : AppText.t(lang, 'Vincular', 'Link', 'Verbinden'),
                 ),
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  Widget _metricCard({
-    required String title,
-    required String value,
-    required IconData icon,
-    required Color color,
-  }) {
-    return Card(
-      color: const Color(0xFF111827),
-      surfaceTintColor: Colors.transparent,
-      margin: const EdgeInsets.only(bottom: 12),
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: color.withOpacity(0.15),
-          child: Icon(icon, color: color),
-        ),
-        title: Text(title, style: const TextStyle(color: Colors.white)),
-        trailing: Text(
-          value,
-          style: const TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-          ),
         ),
       ),
     );

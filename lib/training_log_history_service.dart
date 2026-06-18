@@ -59,7 +59,7 @@ class TrainingLogHistoryService {
       readiness: log.readiness,
       soreness: log.soreness,
       rpe: log.rpe,
-      neuralFatigue: log.rpe,
+      neuralFatigue: log.neuralStress.round(),
       technicalQuality: technicalQuality,
       coachDecision: log.aiDecision.isNotEmpty
           ? log.aiDecision
@@ -71,9 +71,22 @@ class TrainingLogHistoryService {
 
   static Future<List<TrainingAlert>> generateAlerts(String athleteId) async {
     final logs = await loadLogs(athleteId);
+
     final alerts = <TrainingAlert>[];
 
-    if (logs.isEmpty) return alerts;
+    if (logs.isEmpty) {
+      alerts.add(
+        TrainingAlert(
+          title: 'ℹ️ Sin registros del entrenador',
+          description:
+              'La IA puede usar datos fisiológicos y wearable, pero los avisos serán más precisos cuando exista registro en “¿Cómo fue?”.',
+          severity: 'info',
+          detectedAt: DateTime.now(),
+        ),
+      );
+
+      return alerts;
+    }
 
     final sorted = List<DailyAthleteLog>.from(logs)
       ..sort((a, b) => b.date.compareTo(a.date));
@@ -84,8 +97,10 @@ class TrainingLogHistoryService {
     final recent14 = sorted.length > 14 ? sorted.sublist(0, 14) : sorted;
 
     _addTodayAlerts(alerts, today);
+    _addHiddenPhysiologyAlerts(alerts, today);
     _addShortTrendAlerts(alerts, recent3);
     _addWeeklyTrendAlerts(alerts, recent7);
+    _addHiddenTrendAlerts(alerts, recent7);
     _addLongerPatternAlerts(alerts, recent14);
 
     return alerts;
@@ -98,9 +113,9 @@ class TrainingLogHistoryService {
     if (today.readiness < 45) {
       alerts.add(
         TrainingAlert(
-          title: '🔴 Readiness muy bajo hoy',
+          title: '🔴 Disponibilidad muy baja hoy',
           description:
-              'El readiness de hoy es ${today.readiness}. Revisar carga de mañana, priorizar recuperación y evitar intensidad alta si hay dolor o fatiga.',
+              'La disponibilidad de hoy es ${today.readiness}. Priorizar recuperación y evitar intensidad alta si hay dolor o fatiga.',
           severity: 'critical',
           detectedAt: DateTime.now(),
         ),
@@ -108,9 +123,9 @@ class TrainingLogHistoryService {
     } else if (today.readiness < 60) {
       alerts.add(
         TrainingAlert(
-          title: '⚠️ Readiness bajo hoy',
+          title: '⚠️ Disponibilidad baja hoy',
           description:
-              'El readiness de hoy está por debajo de 60. Conviene controlar la carga y observar respuesta antes de aumentar intensidad.',
+              'La disponibilidad está por debajo de 60. Conviene controlar la carga y observar respuesta antes de aumentar intensidad.',
           severity: 'warning',
           detectedAt: DateTime.now(),
         ),
@@ -120,9 +135,9 @@ class TrainingLogHistoryService {
     if (today.rpe >= 9) {
       alerts.add(
         TrainingAlert(
-          title: '🔴 RPE muy alto hoy',
+          title: '🔴 Esfuerzo muy alto hoy',
           description:
-              'El atleta reportó RPE ${today.rpe}/10. La sesión fue percibida como muy exigente; revisar recuperación y carga del siguiente día.',
+              'El atleta reportó esfuerzo ${today.rpe}/10. Revisar recuperación y carga del siguiente día.',
           severity: 'critical',
           detectedAt: DateTime.now(),
         ),
@@ -130,9 +145,9 @@ class TrainingLogHistoryService {
     } else if (today.rpe >= 8) {
       alerts.add(
         TrainingAlert(
-          title: '⚠️ RPE alto hoy',
+          title: '⚠️ Esfuerzo alto hoy',
           description:
-              'El atleta reportó RPE ${today.rpe}/10. Monitorear fatiga neuromuscular y evitar acumular otra sesión intensa inmediatamente.',
+              'El atleta reportó esfuerzo ${today.rpe}/10. Evitar acumular otra sesión intensa inmediatamente.',
           severity: 'warning',
           detectedAt: DateTime.now(),
         ),
@@ -149,7 +164,7 @@ class TrainingLogHistoryService {
         TrainingAlert(
           title: '⚠️ Dolor de rodilla alto hoy',
           description:
-              'Rodilla reportada en $kneePain/10. Revisar pliometría, curvas, volumen de patines y ejercicios de fuerza con alta carga articular.',
+              'Rodilla reportada en $kneePain/10. Revisar pliometría, curvas, volumen de patines y fuerza con alta carga articular.',
           severity: 'warning',
           detectedAt: DateTime.now(),
         ),
@@ -161,7 +176,7 @@ class TrainingLogHistoryService {
         TrainingAlert(
           title: '⚠️ Dolor lumbar alto hoy',
           description:
-              'Lumbar reportada en $lumbarPain/10. Cuidado con fuerza pesada, bisagras de cadera y trabajo prolongado en posición baja.',
+              'Lumbar reportada en $lumbarPain/10. Cuidado con fuerza pesada y trabajo prolongado en posición baja.',
           severity: 'warning',
           detectedAt: DateTime.now(),
         ),
@@ -185,7 +200,7 @@ class TrainingLogHistoryService {
         TrainingAlert(
           title: '⚠️ Dolor de aductores alto hoy',
           description:
-              'Aductores reportados en $adductorPain/10. Revisar empuje lateral, curvas, cambios de ritmo y cargas de velocidad.',
+              'Aductores reportados en $adductorPain/10. Revisar empuje lateral, curvas, cambios de ritmo y velocidad.',
           severity: 'warning',
           detectedAt: DateTime.now(),
         ),
@@ -197,7 +212,7 @@ class TrainingLogHistoryService {
         TrainingAlert(
           title: '⚠️ Técnica mala hoy',
           description:
-              'El entrenador reportó calidad técnica mala. Puede indicar fatiga, rigidez o exceso de intensidad para el estado actual.',
+              'El entrenador reportó técnica mala. Puede indicar fatiga, rigidez o exceso de intensidad para el estado actual.',
           severity: 'warning',
           detectedAt: DateTime.now(),
         ),
@@ -217,6 +232,71 @@ class TrainingLogHistoryService {
     }
   }
 
+  static void _addHiddenPhysiologyAlerts(
+    List<TrainingAlert> alerts,
+    DailyAthleteLog today,
+  ) {
+    if (today.recoveryCost >= 85 || today.hiddenBodyStress >= 85) {
+      alerts.add(
+        TrainingAlert(
+          title: '🔴 Recuperación comprometida',
+          description:
+              'La sesión dejó un coste interno alto. Conviene priorizar descarga, movilidad o trabajo técnico suave antes de volver a exigir.',
+          severity: 'critical',
+          detectedAt: DateTime.now(),
+        ),
+      );
+    } else if (today.recoveryCost >= 70 || today.hiddenBodyStress >= 70) {
+      alerts.add(
+        TrainingAlert(
+          title: '⚠️ Carga interna elevada',
+          description:
+              'La app detectó que el entrenamiento fue más costoso de lo que parece por distancia o duración. Controlar la próxima carga.',
+          severity: 'warning',
+          detectedAt: DateTime.now(),
+        ),
+      );
+    }
+
+    if (today.neuralStress >= 80 || today.intermittentStress >= 80) {
+      alerts.add(
+        TrainingAlert(
+          title: '⚠️ Fatiga neuromuscular elevada',
+          description:
+              'Evitar velocidad máxima, salidas explosivas o cambios de ritmo fuertes hasta recuperar frescura.',
+          severity: 'warning',
+          detectedAt: DateTime.now(),
+        ),
+      );
+    }
+
+    if (today.mechanicalStress >= 80 ||
+        today.tendonStress >= 80 ||
+        today.terrainStress >= 80) {
+      alerts.add(
+        TrainingAlert(
+          title: '⚠️ Estrés mecánico alto',
+          description:
+              'Proteger tendones, fuerza pesada, saltos, curvas exigentes y pliometría durante la próxima carga.',
+          severity: 'warning',
+          detectedAt: DateTime.now(),
+        ),
+      );
+    }
+
+    if (today.technicalStress >= 75 && today.coordinationStress >= 70) {
+      alerts.add(
+        TrainingAlert(
+          title: '⚠️ Técnica bajo fatiga',
+          description:
+              'La sesión tuvo alta exigencia técnica y coordinativa. Mantener técnica limpia antes de aumentar intensidad.',
+          severity: 'warning',
+          detectedAt: DateTime.now(),
+        ),
+      );
+    }
+  }
+
   static void _addShortTrendAlerts(
     List<TrainingAlert> alerts,
     List<DailyAthleteLog> recent3,
@@ -227,9 +307,9 @@ class TrainingLogHistoryService {
     if (lowReadiness >= 2) {
       alerts.add(
         TrainingAlert(
-          title: '⚠️ Readiness bajo repetido',
+          title: '⚠️ Disponibilidad baja repetida',
           description:
-              'El readiness estuvo bajo en $lowReadiness de los últimos ${recent3.length} registros. Posible fatiga acumulada temprana.',
+              'La disponibilidad estuvo baja en $lowReadiness de los últimos ${recent3.length} registros. Posible fatiga acumulada temprana.',
           severity: 'warning',
           detectedAt: DateTime.now(),
         ),
@@ -242,7 +322,7 @@ class TrainingLogHistoryService {
         TrainingAlert(
           title: '⚠️ Alta exigencia repetida',
           description:
-              'RPE ≥8 en $highRpe de los últimos ${recent3.length} registros. Evitar encadenar sesiones intensas sin recuperación suficiente.',
+              'Esfuerzo ≥8 en $highRpe de los últimos ${recent3.length} registros. Evitar encadenar sesiones intensas sin recuperación suficiente.',
           severity: 'warning',
           detectedAt: DateTime.now(),
         ),
@@ -281,9 +361,9 @@ class TrainingLogHistoryService {
     if (avgReadiness < 60) {
       alerts.add(
         TrainingAlert(
-          title: '🔴 Readiness semanal bajo',
+          title: '🔴 Disponibilidad semanal baja',
           description:
-              'Promedio reciente de readiness: ${avgReadiness.toStringAsFixed(1)}. Considerar microdescarga o reducir intensidad.',
+              'Promedio reciente de disponibilidad: ${avgReadiness.toStringAsFixed(1)}. Considerar microdescarga o reducir intensidad.',
           severity: 'critical',
           detectedAt: DateTime.now(),
         ),
@@ -295,7 +375,7 @@ class TrainingLogHistoryService {
         TrainingAlert(
           title: '⚠️ Carga interna alta',
           description:
-              'Promedio reciente de RPE: ${avgRpe.toStringAsFixed(1)}/10. Revisar acumulación de intensidad y recuperación.',
+              'Promedio reciente de esfuerzo: ${avgRpe.toStringAsFixed(1)}/10. Revisar acumulación de intensidad y recuperación.',
           severity: 'warning',
           detectedAt: DateTime.now(),
         ),
@@ -312,7 +392,56 @@ class TrainingLogHistoryService {
         TrainingAlert(
           title: '⚠️ Técnica degradada recurrente',
           description:
-              'Calidad técnica regular o mala en $poorTechnique registros recientes. Puede indicar fatiga o exceso de carga técnica bajo cansancio.',
+              'Técnica regular o mala en $poorTechnique registros recientes. Puede indicar fatiga o exceso de carga técnica bajo cansancio.',
+          severity: 'warning',
+          detectedAt: DateTime.now(),
+        ),
+      );
+    }
+  }
+
+  static void _addHiddenTrendAlerts(
+    List<TrainingAlert> alerts,
+    List<DailyAthleteLog> recent7,
+  ) {
+    if (recent7.length < 3) return;
+
+    final avgRecoveryCost = _avg(recent7, (log) => log.recoveryCost);
+    final avgNeuralStress = _avg(recent7, (log) => log.neuralStress);
+    final avgMechanicalStress = _avg(recent7, (log) => log.mechanicalStress);
+    final avgTendonStress = _avg(recent7, (log) => log.tendonStress);
+    final avgHiddenStress = _avg(recent7, (log) => log.hiddenBodyStress);
+
+    if (avgRecoveryCost >= 70 || avgHiddenStress >= 70) {
+      alerts.add(
+        TrainingAlert(
+          title: '⚠️ Recuperación en observación',
+          description:
+              'Los últimos registros muestran coste interno acumulado. Conviene no subir carga hasta ver mejor respuesta.',
+          severity: 'warning',
+          detectedAt: DateTime.now(),
+        ),
+      );
+    }
+
+    if (avgNeuralStress >= 70) {
+      alerts.add(
+        TrainingAlert(
+          title: '⚠️ Carga neural acumulada',
+          description:
+              'La semana reciente acumula estímulos rápidos o intermitentes. Evitar encadenar salidas, velocidad máxima o Z5 sin recuperación.',
+          severity: 'warning',
+          detectedAt: DateTime.now(),
+        ),
+      );
+    }
+
+    if (avgMechanicalStress >= 70 || avgTendonStress >= 70) {
+      alerts.add(
+        TrainingAlert(
+          title: '⚠️ Carga mecánica acumulada',
+          description:
+              'Vigilar tendones y articulaciones. Controlar curvas, saltos, fuerza pesada y volumen sobre patines.',
           severity: 'warning',
           detectedAt: DateTime.now(),
         ),
@@ -335,7 +464,7 @@ class TrainingLogHistoryService {
         TrainingAlert(
           title: '🔴 Dolor de rodilla recurrente',
           description:
-              'Rodilla ≥4/10 en $kneePainDays registros recientes. Revisar carga de pliometría, curvas, fuerza de piernas y recuperación tendinosa.',
+              'Rodilla ≥4/10 en $kneePainDays registros recientes. Revisar pliometría, curvas, fuerza de piernas y recuperación tendinosa.',
           severity: 'critical',
           detectedAt: DateTime.now(),
         ),
@@ -413,5 +542,14 @@ class TrainingLogHistoryService {
     if (match == null) return 0;
 
     return int.tryParse(match.group(1) ?? '0') ?? 0;
+  }
+
+  static double _avg(
+    List<DailyAthleteLog> logs,
+    double Function(DailyAthleteLog log) pick,
+  ) {
+    if (logs.isEmpty) return 0;
+
+    return logs.fold<double>(0, (sum, log) => sum + pick(log)) / logs.length;
   }
 }

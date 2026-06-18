@@ -92,8 +92,8 @@ class AthleteContextService extends ChangeNotifier {
 
   int get activeReadinessScore {
     final id = activeAthleteId;
-    if (id == null) return 100;
-    return _readinessByAthlete[id] ?? 100;
+    if (id == null) return 0;
+    return _readinessByAthlete[id] ?? 0;
   }
 
   AthleteDailyState? get currentDailyState {
@@ -117,7 +117,7 @@ class AthleteContextService extends ChangeNotifier {
     _historyByAthlete.putIfAbsent(athlete.id, () => []);
     _wearableHistoryByAthlete.putIfAbsent(athlete.id, () => []);
     _fatigueByAthlete.putIfAbsent(athlete.id, () => 'green');
-    _readinessByAthlete.putIfAbsent(athlete.id, () => 100);
+    _readinessByAthlete.putIfAbsent(athlete.id, () => 0);
 
     _recalculateInternalPhysiologyForAthlete(athlete.id);
 

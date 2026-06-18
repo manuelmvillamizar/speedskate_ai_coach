@@ -1,8 +1,6 @@
 // lib/garmin_backend_api_service.dart
 
 import 'dart:convert';
-import 'dart:io' show Platform;
-
 import 'package:http/http.dart' as http;
 
 import 'wearable_integration_service.dart';
@@ -12,19 +10,18 @@ class GarminSyncResult {
   final String message;
   final WearableDailyData? wearableData;
   final List<Map<String, dynamic>>? activities;
+  final List<WearableDailyData> historyData;
 
   GarminSyncResult({
     required this.success,
     required this.message,
     this.wearableData,
     this.activities,
+    this.historyData = const [],
   });
 }
 
 class GarminBackendApiService {
-  // Cambia solo esta línea si cambia la IP de tu PC.
-  static String developmentIp = '192.168.1.121';
-
   static String get _baseUrl {
     return 'https://speedskate-ai-coach.onrender.com';
   }
@@ -32,11 +29,22 @@ class GarminBackendApiService {
   static Future<GarminSyncResult> syncGarmin({
     required String athleteId,
     Function(String)? onProgress,
+    WearableDailyData? currentToday,
+    DateTime? date,
   }) async {
     try {
       onProgress?.call('Conectando con backend...');
 
-      final url = Uri.parse('$_baseUrl/garmin/normalized?athleteId=$athleteId');
+      final selectedDate = date ?? DateTime.now();
+
+      final dateText =
+          '${selectedDate.year.toString().padLeft(4, '0')}-'
+          '${selectedDate.month.toString().padLeft(2, '0')}-'
+          '${selectedDate.day.toString().padLeft(2, '0')}';
+
+      final url = Uri.parse(
+        '$_baseUrl/garmin/normalized?athleteId=$athleteId&date=$dateText',
+      );
 
       final response = await http
           .get(url, headers: {'Content-Type': 'application/json'})
@@ -48,12 +56,83 @@ class GarminBackendApiService {
         onProgress?.call('Datos recibidos del backend');
 
         final wearableData = _parseWearableData(data);
+        final historyData = _parseWearableHistory(data);
+
+        // ✅ FALLBACK: usar valores previos si los nuevos son 0
+        WearableDailyData? finalData = wearableData;
+        if (wearableData != null && currentToday != null) {
+          final finalHrv = wearableData.hrv > 0
+              ? wearableData.hrv
+              : currentToday.hrv;
+          final finalStress = wearableData.stress > 0
+              ? wearableData.stress
+              : currentToday.stress;
+          final finalBodyBattery = wearableData.bodyBattery > 0
+              ? wearableData.bodyBattery
+              : currentToday.bodyBattery;
+          final finalSleepMinutes = wearableData.sleepMinutes > 0
+              ? wearableData.sleepMinutes
+              : currentToday.sleepMinutes;
+          final finalRestingHeartRate = wearableData.restingHeartRate > 0
+              ? wearableData.restingHeartRate
+              : currentToday.restingHeartRate;
+          final finalSteps = wearableData.steps > 0
+              ? wearableData.steps
+              : currentToday.steps;
+
+          if (finalHrv != wearableData.hrv ||
+              finalStress != wearableData.stress ||
+              finalBodyBattery != wearableData.bodyBattery ||
+              finalSleepMinutes != wearableData.sleepMinutes ||
+              finalRestingHeartRate != wearableData.restingHeartRate ||
+              finalSteps != wearableData.steps) {
+            finalData = WearableDailyData(
+              date: wearableData.date,
+              sleepMinutes: finalSleepMinutes,
+              hrv: finalHrv,
+              restingHeartRate: finalRestingHeartRate,
+              stress: finalStress,
+              soreness: wearableData.soreness,
+              activeCalories: wearableData.activeCalories,
+              steps: finalSteps,
+              trainingLoad: wearableData.trainingLoad,
+              bodyBattery: finalBodyBattery,
+              zone1Minutes: wearableData.zone1Minutes,
+              zone2Minutes: wearableData.zone2Minutes,
+              zone3Minutes: wearableData.zone3Minutes,
+              zone4Minutes: wearableData.zone4Minutes,
+              zone5Minutes: wearableData.zone5Minutes,
+              averageHeartRate: wearableData.averageHeartRate,
+              maxHeartRate: wearableData.maxHeartRate,
+              rpe: wearableData.rpe,
+              totalTrainingMinutes: wearableData.totalTrainingMinutes,
+              totalDistanceKm: wearableData.totalDistanceKm,
+              source: wearableData.source,
+              hasRealDailyHealth: wearableData.hasRealDailyHealth,
+              hasImportedTraining: wearableData.hasImportedTraining,
+              hasRealHrv: wearableData.hasRealHrv,
+              hasRealSleep: wearableData.hasRealSleep,
+              hasRealStress: wearableData.hasRealStress,
+              hasRealRestingHeartRate: wearableData.hasRealRestingHeartRate,
+              hasRealSoreness: wearableData.hasRealSoreness,
+              hasRealCalories: wearableData.hasRealCalories,
+              hasRealSteps: wearableData.hasRealSteps,
+              hasRealBodyBattery: wearableData.hasRealBodyBattery,
+              hasRealZones: wearableData.hasRealZones,
+              hasRealHeartRate: wearableData.hasRealHeartRate,
+              hasRealTrainingLoad: wearableData.hasRealTrainingLoad,
+            );
+          }
+        }
 
         return GarminSyncResult(
-          success: wearableData != null,
+          success: finalData != null,
           message: data['message']?.toString() ?? 'Sincronización completada',
-          wearableData: wearableData,
-          activities: List<Map<String, dynamic>>.from(data['sessions'] ?? []),
+          wearableData: finalData,
+          activities: List<Map<String, dynamic>>.from(
+            data['days'] ?? data['sessions'] ?? [],
+          ),
+          historyData: historyData,
         );
       }
 
@@ -67,6 +146,102 @@ class GarminBackendApiService {
         message: 'No se pudo conectar con el backend: $e',
       );
     }
+  }
+
+  static List<WearableDailyData> _parseWearableHistory(
+    Map<String, dynamic> data,
+  ) {
+    final rawDays = data['days'];
+
+    if (rawDays is! List) return [];
+
+    return rawDays.whereType<Map>().map((rawDay) {
+      final day = Map<String, dynamic>.from(rawDay);
+      final summary = Map<String, dynamic>.from(day['summary'] ?? {});
+      final sessions = (day['sessions'] as List?) ?? [];
+
+      int zone1 = 0;
+      int zone2 = 0;
+      int zone3 = 0;
+      int zone4 = 0;
+      int zone5 = 0;
+
+      int averageHr = 0;
+      int maxHr = 0;
+      int hrCount = 0;
+
+      for (final rawSession in sessions.whereType<Map>()) {
+        final session = Map<String, dynamic>.from(rawSession);
+
+        zone1 += (_doubleFromAny(session['hrTimeInZone_1']) / 60).round();
+        zone2 += (_doubleFromAny(session['hrTimeInZone_2']) / 60).round();
+        zone3 += (_doubleFromAny(session['hrTimeInZone_3']) / 60).round();
+        zone4 += (_doubleFromAny(session['hrTimeInZone_4']) / 60).round();
+        zone5 += (_doubleFromAny(session['hrTimeInZone_5']) / 60).round();
+
+        final avg = _intFromAny(session['avg_hr']);
+        final max = _intFromAny(session['max_hr']);
+
+        if (avg > 0) {
+          averageHr += avg;
+          hrCount++;
+        }
+
+        if (max > maxHr) {
+          maxHr = max;
+        }
+      }
+
+      final totalZoneMinutes = zone1 + zone2 + zone3 + zone4 + zone5;
+
+      final totalMinutes = _doubleFromAny(
+        summary['total_duration_min'],
+      ).round();
+
+      final totalKm = _doubleFromAny(summary['total_distance_km']);
+      final load = _doubleFromAny(summary['total_internal_load']);
+
+      return WearableDailyData(
+        date:
+            DateTime.tryParse(day['date']?.toString() ?? '') ?? DateTime.now(),
+        sleepMinutes: 0,
+        hrv: 0,
+        restingHeartRate: 0,
+        stress: 0,
+        soreness: 0,
+        activeCalories: 0,
+        steps: 0,
+        trainingLoad: load,
+        bodyBattery: 0,
+        zone1Minutes: zone1,
+        zone2Minutes: zone2,
+        zone3Minutes: zone3,
+        zone4Minutes: zone4,
+        zone5Minutes: zone5,
+        averageHeartRate: hrCount > 0 ? (averageHr / hrCount).round() : 0,
+        maxHeartRate: maxHr,
+        rpe: 0,
+        totalTrainingMinutes: totalMinutes > 0
+            ? totalMinutes
+            : totalZoneMinutes,
+        totalDistanceKm: totalKm,
+        source: 'garmin_backend_history',
+        hasRealDailyHealth: false,
+        hasImportedTraining:
+            totalMinutes > 0 || totalKm > 0 || totalZoneMinutes > 0,
+        hasRealHrv: false,
+        hasRealSleep: false,
+        hasRealStress: false,
+        hasRealRestingHeartRate: false,
+        hasRealSoreness: false,
+        hasRealCalories: false,
+        hasRealSteps: false,
+        hasRealBodyBattery: false,
+        hasRealZones: totalZoneMinutes > 0,
+        hasRealHeartRate: hrCount > 0 || maxHr > 0,
+        hasRealTrainingLoad: load > 0,
+      );
+    }).toList()..sort((a, b) => a.date.compareTo(b.date));
   }
 
   static WearableDailyData? _parseWearableData(Map<String, dynamic> data) {
@@ -126,6 +301,7 @@ class GarminBackendApiService {
           summary['total_steps'] ??
           stats['totalSteps'],
     );
+
     final activeCalories = _intFromAny(
       summary['active_calories'] ??
           summary['activeCalories'] ??
@@ -139,10 +315,48 @@ class GarminBackendApiService {
           summary['training_load'],
     );
 
-    final sessions = _sessionsFromData(data);
+    final allSessions = _sessionsFromData(data);
+
+    final dataDate =
+        DateTime.tryParse(data['date']?.toString() ?? '') ?? DateTime.now();
+
+    final sessions = allSessions.where((session) {
+      final rawDate =
+          session['date'] ??
+          session['calendarDate'] ??
+          session['startTime'] ??
+          session['start_time'];
+
+      final sessionDate = DateTime.tryParse(rawDate?.toString() ?? '');
+
+      if (sessionDate == null) return false;
+
+      return sessionDate.year == dataDate.year &&
+          sessionDate.month == dataDate.month &&
+          sessionDate.day == dataDate.day;
+    }).toList();
+
     final zones = _zonesFromSessions(sessions);
 
-    final totalTrainingMinutes = _totalTrainingMinutesFromSessions(sessions);
+    final sessionTrainingMinutes = _totalTrainingMinutesFromSessions(sessions);
+
+    final summaryTrainingMinutes = _intFromAny(
+      summary['total_training_minutes'] ??
+          summary['totalTrainingMinutes'] ??
+          summary['training_minutes'] ??
+          summary['trainingMinutes'] ??
+          summary['activity_minutes'] ??
+          summary['active_minutes'] ??
+          summary['activeMinutes'] ??
+          summary['total_activity_minutes'],
+    );
+
+    final totalTrainingMinutes = [
+      sessionTrainingMinutes,
+      summaryTrainingMinutes,
+      zones.total,
+    ].reduce((a, b) => a > b ? a : b);
+
     final totalDistanceKm = _totalDistanceKmFromSessions(sessions);
 
     final averageHeartRate = _averageHeartRateFromSessions(sessions);
@@ -280,7 +494,6 @@ class GarminBackendApiService {
     );
   }
 
-  // ✅ FUNCIÓN CORREGIDA - Ahora soporta hrTimeInZone_$zone
   static int _zoneFromSession(Map<String, dynamic> session, int zone) {
     final direct = _intFromAny(
       session['zone${zone}Minutes'] ??
@@ -324,13 +537,25 @@ class GarminBackendApiService {
         session['duration_minutes'] ??
             session['durationMinutes'] ??
             session['moving_duration_minutes'] ??
-            session['elapsed_minutes'],
+            session['movingDurationMinutes'] ??
+            session['elapsed_minutes'] ??
+            session['elapsedMinutes'] ??
+            session['elapsed_time_minutes'] ??
+            session['activeDurationMinutes'] ??
+            session['activityDurationMinutes'] ??
+            session['duration'],
       );
 
       final seconds = _intFromAny(
         session['duration_seconds'] ??
             session['durationSeconds'] ??
-            session['movingDurationSeconds'],
+            session['movingDurationSeconds'] ??
+            session['elapsed_seconds'] ??
+            session['elapsedSeconds'] ??
+            session['elapsed_time_seconds'] ??
+            session['activeDurationSeconds'] ??
+            session['activityDurationSeconds'] ??
+            session['durationInSeconds'],
       );
 
       if (seconds > 0) {

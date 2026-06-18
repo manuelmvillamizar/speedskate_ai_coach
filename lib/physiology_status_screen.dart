@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'app_language.dart';
 import 'app_text.dart';
 import 'athlete_context_service.dart';
+import 'athlete_daily_state.dart';
 import 'fatigue_engine.dart';
 import 'physiology_sports_translator.dart';
 import 'wearable_integration_service.dart';
@@ -19,6 +20,7 @@ class PhysiologyStatusScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final lang = context.watch<AppLanguageNotifier>().current;
     final athleteContext = context.watch<AthleteContextService>();
+    final dailyState = athleteContext.currentDailyState;
     final wearableService = context.watch<WearableIntegrationService>();
 
     final wearable = athleteContext.activeWearable ?? wearableService.today;
@@ -82,7 +84,15 @@ class PhysiologyStatusScreen extends StatelessWidget {
             fatigueStatus: fatigueStatus,
           ),
           const SizedBox(height: 12),
-          _QuickStatusRow(lang: lang, wearable: wearable, readiness: readiness),
+          if (dailyState != null) ...[
+            _PhysiologyInterpretationCard(state: dailyState),
+            const SizedBox(height: 12),
+          ],
+          _QuickStatusRow(
+            lang: lang,
+            wearable: displayWearable ?? wearable,
+            readiness: readiness,
+          ),
           const SizedBox(height: 12),
           if (wearable == null && history.isEmpty)
             _EmptyPhysiologyCard(lang: lang)
@@ -162,7 +172,7 @@ class PhysiologyStatusScreen extends StatelessWidget {
                 lang: lang,
                 wearable: wearable ?? zonesWearable!,
                 readiness: readiness,
-                dataQualityOk: true,
+                dataQualityOk: dataQuality != null,
               ),
               const SizedBox(height: 12),
               _CoachInterpretationCard(
@@ -178,6 +188,66 @@ class PhysiologyStatusScreen extends StatelessWidget {
               ),
             ],
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _PhysiologyInterpretationCard extends StatelessWidget {
+  final AthleteDailyState state;
+
+  const _PhysiologyInterpretationCard({required this.state});
+
+  String get riskText {
+    if (state.injuryRisk >= 70) return 'Riesgo elevado';
+    if (state.injuryRisk >= 40) return 'Riesgo moderado';
+    return 'Riesgo controlado';
+  }
+
+  Color get riskColor {
+    if (state.injuryRisk >= 70) return Colors.red;
+    if (state.injuryRisk >= 40) return Colors.orange;
+    return Colors.green;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final recommendation = state.aiRecommendation.trim().isEmpty
+        ? 'Continuar con la planificación prevista y observar la respuesta.'
+        : state.aiRecommendation;
+
+    final summary = state.aiSummary.trim().isEmpty
+        ? 'Estado fisiológico estable.'
+        : state.aiSummary;
+
+    return _DarkCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _SectionTitle('Interpretación fisiológica'),
+          const SizedBox(height: 10),
+          Text(summary, style: const TextStyle(color: Colors.white70)),
+          const SizedBox(height: 12),
+          Text(
+            recommendation,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w600,
+              height: 1.3,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Icon(Icons.health_and_safety, color: riskColor),
+              const SizedBox(width: 8),
+              Text(
+                riskText,
+                style: TextStyle(color: riskColor, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
         ],
       ),
     );

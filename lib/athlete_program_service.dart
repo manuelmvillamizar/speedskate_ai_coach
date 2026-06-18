@@ -91,6 +91,9 @@ class AthleteProgramProfile {
   AthleteProgramLevel level;
   int age;
   double weightKg;
+  double heightCm;
+  String email;
+  String whatsapp;
   DateTime? birthDate;
 
   DateTime? savedSeasonStartDate;
@@ -110,6 +113,9 @@ class AthleteProgramProfile {
     required this.level,
     required this.age,
     required this.weightKg,
+    this.heightCm = 0,
+    this.email = '',
+    this.whatsapp = '',
     this.birthDate,
     this.savedSeasonStartDate,
     this.savedSeasonWeeks,
@@ -185,6 +191,7 @@ class AthleteProgramService extends ChangeNotifier {
       await prefs.reload();
 
       final raw = prefs.getString(_storageKey);
+
       final savedActiveId = prefs.getString(_activeAthleteKey);
 
       final loadedAthletes = <AthleteProgramProfile>[];
@@ -216,6 +223,9 @@ class AthleteProgramService extends ChangeNotifier {
               level: _levelFromString(map['level'] as String? ?? 'competitive'),
               age: calculatedAge,
               weightKg: (map['weightKg'] as num?)?.toDouble() ?? 0,
+              heightCm: (map['heightCm'] as num?)?.toDouble() ?? 0,
+              email: map['email'] as String? ?? '',
+              whatsapp: map['whatsapp'] as String? ?? '',
               birthDate: birthDate,
               savedSeasonStartDate: map['savedSeasonStartDate'] == null
                   ? null
@@ -326,6 +336,9 @@ class AthleteProgramService extends ChangeNotifier {
       'level': athlete.level.name,
       'age': athlete.age,
       'weightKg': athlete.weightKg,
+      'heightCm': athlete.heightCm,
+      'email': athlete.email,
+      'whatsapp': athlete.whatsapp,
       'birthDate': athlete.birthDate?.toIso8601String(),
       'savedSeasonStartDate': athlete.savedSeasonStartDate?.toIso8601String(),
       'savedSeasonWeeks': athlete.savedSeasonWeeks,
@@ -372,6 +385,10 @@ class AthleteProgramService extends ChangeNotifier {
     required AthleteProgramLevel level,
     required int age,
     required double weightKg,
+    required double heightCm,
+    required String email,
+    required String whatsapp,
+
     DateTime? birthDate,
   }) async {
     final athlete = athletes.firstWhere((a) => a.id == athleteId);
@@ -380,6 +397,9 @@ class AthleteProgramService extends ChangeNotifier {
     athlete.type = type;
     athlete.level = level;
     athlete.weightKg = weightKg;
+    athlete.heightCm = heightCm;
+    athlete.email = email;
+    athlete.whatsapp = whatsapp;
     athlete.birthDate = birthDate ?? athlete.birthDate;
 
     if (athlete.birthDate != null) {
@@ -388,6 +408,18 @@ class AthleteProgramService extends ChangeNotifier {
       athlete.age = age;
       athlete.category = category;
     }
+
+    await _saveData();
+    notifyListeners();
+  }
+
+  Future<void> updateAthleteWeight({
+    required String athleteId,
+    required double weightKg,
+  }) async {
+    final athlete = athletes.firstWhere((a) => a.id == athleteId);
+
+    athlete.weightKg = weightKg;
 
     await _saveData();
     notifyListeners();

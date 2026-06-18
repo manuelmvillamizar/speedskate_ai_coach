@@ -43,6 +43,11 @@ class TrainingLogLearningAdapter {
       log: log,
       response: response,
     );
+    memory = _learnFromExecutionGap(
+      memory: memory,
+      log: log,
+      response: response,
+    );
 
     // Aprender del dolor específico por zonas
     memory = _learnFromPainAreas(memory: memory, painAreas: painAreas);
@@ -134,16 +139,20 @@ class TrainingLogLearningAdapter {
   }) {
     var sprintTol = memory.sprintTolerance;
     var lactateTol = memory.lactateTolerance;
+    var gymTol = memory.gymTolerance;
+    var jumpTol = memory.jumpTolerance;
     var doubleSessionTol = memory.doubleSessionTolerance;
     var z5Tol = memory.z5Tolerance;
 
-    final sessionType = log.performedSessionType.toLowerCase();
+    final sessionType = '${log.performedSessionType} ${log.aiNotes}'
+        .toLowerCase();
 
     final isSprint =
         sessionType.contains('speed') ||
         sessionType.contains('sprint') ||
         sessionType.contains('velocidad') ||
-        sessionType.contains('aceleracion');
+        sessionType.contains('aceleracion') ||
+        sessionType.contains('salidas');
 
     final isLactate =
         sessionType.contains('lactate') ||
@@ -155,6 +164,25 @@ class TrainingLogLearningAdapter {
         log.performedMinutes >= 100 || log.performedLoad >= 85;
 
     final hasZ5 = log.zone5Minutes >= 8;
+
+    final isSkatingStrength =
+        sessionType.contains('fuerza sobre patines') ||
+        sessionType.contains('empuje') ||
+        sessionType.contains('empujes') ||
+        sessionType.contains('sentadilla') ||
+        sessionType.contains('unipodal') ||
+        sessionType.contains('una pierna') ||
+        sessionType.contains('posición baja') ||
+        sessionType.contains('posicion baja');
+    final isGymStrength = sessionType.contains('gimnasio');
+    final isBalance =
+        sessionType.contains('equilibrio') ||
+        sessionType.contains('estabilidad') ||
+        sessionType.contains('control');
+    final isCurves = sessionType.contains('curvas');
+    final isTechnique =
+        sessionType.contains('tecnica') || sessionType.contains('técnica');
+    final isPlyometric = sessionType.contains('pliometr');
 
     if (isSprint) {
       sprintTol = _adjustTolerance(sprintTol, response);
@@ -172,9 +200,36 @@ class TrainingLogLearningAdapter {
       z5Tol = _adjustTolerance(z5Tol, response);
     }
 
+    if (isGymStrength) {
+      gymTol = _adjustTolerance(gymTol, response);
+    }
+
+    if (isPlyometric) {
+      jumpTol = _adjustTolerance(jumpTol, response);
+    }
+
+    if (isSkatingStrength) {
+      gymTol = _adjustTolerance(gymTol, response);
+      sprintTol = _adjustTolerance(sprintTol, response);
+    }
+
+    if (isBalance && response == _TrainingResponse.good) {
+      sprintTol = (sprintTol + 0.005).clamp(0.70, 1.30).toDouble();
+    }
+
+    if (isTechnique && response == _TrainingResponse.good) {
+      sprintTol = (sprintTol + 0.004).clamp(0.70, 1.30).toDouble();
+    }
+
+    if (isCurves && response == _TrainingResponse.good) {
+      sprintTol = (sprintTol + 0.006).clamp(0.70, 1.30).toDouble();
+    }
+
     return memory.copyWith(
       sprintTolerance: sprintTol,
       lactateTolerance: lactateTol,
+      gymTolerance: gymTol,
+      jumpTolerance: jumpTol,
       doubleSessionTolerance: doubleSessionTol,
       z5Tolerance: z5Tol,
     );
@@ -280,6 +335,149 @@ class TrainingLogLearningAdapter {
           0.70,
           1.30,
         ),
+      );
+    }
+
+    return updated;
+  }
+
+  static AdaptiveResponseMemory _learnFromExecutionGap({
+    required AdaptiveResponseMemory memory,
+    required DailyAthleteLog log,
+    required _TrainingResponse response,
+  }) {
+    var updated = memory;
+
+    final hasPlannedVolume =
+        log.plannedMinutes > 0 || log.plannedLoad > 0 || log.plannedKm > 0;
+
+    if (!hasPlannedVolume) return updated;
+
+    final minuteRatio = log.plannedMinutes <= 0
+        ? 1.0
+        : log.performedMinutes / log.plannedMinutes;
+
+    final loadRatio = log.plannedLoad <= 0
+        ? 1.0
+        : log.performedLoad / log.plannedLoad;
+
+    final kmRatio = log.plannedKm <= 0 ? 1.0 : log.performedKm / log.plannedKm;
+
+    final averageExecutionRatio = ((minuteRatio + loadRatio + kmRatio) / 3)
+        .clamp(0.0, 2.0)
+        .toDouble();
+
+    final clearlyUnderExecuted =
+        averageExecutionRatio < 0.75 || log.completedAsPlanned == false;
+
+    final clearlyOverExecuted = averageExecutionRatio > 1.20;
+
+    final sessionText =
+        '${log.plannedSessionType} ${log.performedSessionType} ${log.aiNotes}'
+            .toLowerCase();
+
+    final isSpeed =
+        sessionText.contains('velocidad') ||
+        sessionText.contains('speed') ||
+        sessionText.contains('sprint') ||
+        sessionText.contains('salidas') ||
+        sessionText.contains('aceler');
+
+    final isStrength =
+        sessionText.contains('fuerza') ||
+        sessionText.contains('gimnasio') ||
+        sessionText.contains('sentadilla') ||
+        sessionText.contains('pesas');
+
+    final isLactate =
+        sessionText.contains('lactato') ||
+        sessionText.contains('anaer') ||
+        sessionText.contains('z5');
+
+    final isDoubleOrDense =
+        log.plannedMinutes >= 100 ||
+        log.plannedLoad >= 85 ||
+        log.performedMinutes >= 100 ||
+        log.performedLoad >= 85;
+
+    if (clearlyUnderExecuted && response == _TrainingResponse.poor) {
+      if (isSpeed) {
+        updated = updated.copyWith(
+          sprintTolerance: (updated.sprintTolerance - 0.015)
+              .clamp(0.70, 1.30)
+              .toDouble(),
+          z5Tolerance: (updated.z5Tolerance - 0.012)
+              .clamp(0.70, 1.30)
+              .toDouble(),
+        );
+      }
+
+      if (isStrength) {
+        updated = updated.copyWith(
+          gymTolerance: (updated.gymTolerance - 0.015)
+              .clamp(0.70, 1.30)
+              .toDouble(),
+        );
+      }
+
+      if (isLactate) {
+        updated = updated.copyWith(
+          lactateTolerance: (updated.lactateTolerance - 0.018)
+              .clamp(0.70, 1.30)
+              .toDouble(),
+        );
+      }
+
+      if (isDoubleOrDense) {
+        updated = updated.copyWith(
+          doubleSessionTolerance: (updated.doubleSessionTolerance - 0.018)
+              .clamp(0.70, 1.30)
+              .toDouble(),
+        );
+      }
+
+      updated = updated.copyWith(
+        taperResponse: (updated.taperResponse - 0.006)
+            .clamp(0.70, 1.30)
+            .toDouble(),
+      );
+    }
+
+    if (clearlyUnderExecuted && response == _TrainingResponse.good) {
+      updated = updated.copyWith(
+        taperResponse: (updated.taperResponse + 0.006)
+            .clamp(0.70, 1.30)
+            .toDouble(),
+      );
+    }
+
+    if (clearlyOverExecuted && response == _TrainingResponse.good) {
+      updated = updated.copyWith(
+        sprintTolerance: isSpeed
+            ? (updated.sprintTolerance + 0.010).clamp(0.70, 1.30).toDouble()
+            : updated.sprintTolerance,
+        lactateTolerance: isLactate
+            ? (updated.lactateTolerance + 0.010).clamp(0.70, 1.30).toDouble()
+            : updated.lactateTolerance,
+        gymTolerance: isStrength
+            ? (updated.gymTolerance + 0.010).clamp(0.70, 1.30).toDouble()
+            : updated.gymTolerance,
+        doubleSessionTolerance: isDoubleOrDense
+            ? (updated.doubleSessionTolerance + 0.010)
+                  .clamp(0.70, 1.30)
+                  .toDouble()
+            : updated.doubleSessionTolerance,
+      );
+    }
+
+    if (clearlyOverExecuted && response == _TrainingResponse.poor) {
+      updated = updated.copyWith(
+        doubleSessionTolerance: (updated.doubleSessionTolerance - 0.012)
+            .clamp(0.70, 1.30)
+            .toDouble(),
+        taperResponse: (updated.taperResponse - 0.010)
+            .clamp(0.70, 1.30)
+            .toDouble(),
       );
     }
 

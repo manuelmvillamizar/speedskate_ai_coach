@@ -68,6 +68,46 @@ class AthleteDailyState {
     required this.aiSummary,
     required this.aiRecommendation,
   });
+  AthleteDailyState copyWith({
+    DateTime? date,
+    WearableDailyData? wearable,
+    DailyAthleteLog? log,
+    AthletePhysiologyProfile? physiologyProfile,
+    StrengthLoadState? strengthLoadState,
+    int? readiness,
+    double? injuryRisk,
+    String? fatigueStatus,
+    double? acuteLoad,
+    double? chronicLoad,
+    double? acwr,
+    bool? shouldReduceLoad,
+    bool? shouldBlockIntensity,
+    bool? shouldForceRecovery,
+    bool? taperRecommended,
+    String? aiSummary,
+    String? aiRecommendation,
+  }) {
+    return AthleteDailyState(
+      athleteId: athleteId,
+      date: date ?? this.date,
+      wearable: wearable ?? this.wearable,
+      log: log ?? this.log,
+      physiologyProfile: physiologyProfile ?? this.physiologyProfile,
+      strengthLoadState: strengthLoadState ?? this.strengthLoadState,
+      readiness: readiness ?? this.readiness,
+      injuryRisk: injuryRisk ?? this.injuryRisk,
+      fatigueStatus: fatigueStatus ?? this.fatigueStatus,
+      acuteLoad: acuteLoad ?? this.acuteLoad,
+      chronicLoad: chronicLoad ?? this.chronicLoad,
+      acwr: acwr ?? this.acwr,
+      shouldReduceLoad: shouldReduceLoad ?? this.shouldReduceLoad,
+      shouldBlockIntensity: shouldBlockIntensity ?? this.shouldBlockIntensity,
+      shouldForceRecovery: shouldForceRecovery ?? this.shouldForceRecovery,
+      taperRecommended: taperRecommended ?? this.taperRecommended,
+      aiSummary: aiSummary ?? this.aiSummary,
+      aiRecommendation: aiRecommendation ?? this.aiRecommendation,
+    );
+  }
 
   Map<String, dynamic> toMap() {
     return {
@@ -116,14 +156,10 @@ class AthleteDailyState {
             (strengthMap['reactiveJumpLoadKg'] as num?)?.toDouble() ?? 0,
         totalMechanicalLoadKg:
             (strengthMap['totalMechanicalLoadKg'] as num?)?.toDouble() ?? 0,
-        neuralStress:
-            (strengthMap['neuralStress'] as num?)?.toDouble() ?? 0,
-        muscleStress:
-            (strengthMap['muscleStress'] as num?)?.toDouble() ?? 0,
-        tendonStress:
-            (strengthMap['tendonStress'] as num?)?.toDouble() ?? 0,
-        adaptationSignal:
-            strengthMap['adaptationSignal']?.toString() ?? 'none',
+        neuralStress: (strengthMap['neuralStress'] as num?)?.toDouble() ?? 0,
+        muscleStress: (strengthMap['muscleStress'] as num?)?.toDouble() ?? 0,
+        tendonStress: (strengthMap['tendonStress'] as num?)?.toDouble() ?? 0,
+        adaptationSignal: strengthMap['adaptationSignal']?.toString() ?? 'none',
       );
     }
 
@@ -151,5 +187,3 @@ class AthleteDailyState {
     );
   }
 }
-
-

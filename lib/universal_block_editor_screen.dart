@@ -32,6 +32,7 @@ class _UniversalBlockEditorScreenState
   late final TextEditingController zoneController;
   late final TextEditingController aiReasonController;
   late final TextEditingController coachNoteController;
+  late final TextEditingController freeTextController;
 
   late final TextEditingController warmupController;
   late final TextEditingController mainSetController;
@@ -92,6 +93,7 @@ class _UniversalBlockEditorScreenState
     );
     aiReasonController = TextEditingController(text: block.aiReason);
     coachNoteController = TextEditingController();
+    freeTextController = TextEditingController();
 
     warmupController = TextEditingController(text: _join(block.warmup));
     mainSetController = TextEditingController(text: _join(block.mainSet));
@@ -135,6 +137,7 @@ class _UniversalBlockEditorScreenState
     zoneController.dispose();
     aiReasonController.dispose();
     coachNoteController.dispose();
+    freeTextController.dispose();
 
     warmupController.dispose();
     mainSetController.dispose();
@@ -192,6 +195,105 @@ class _UniversalBlockEditorScreenState
         aiReasonController.text = preset.reason;
       }
     });
+  }
+
+  void _interpretFreeText() {
+    final text = freeTextController.text.trim().toLowerCase();
+
+    if (text.isEmpty) return;
+
+    setState(() {
+      titleController.text = 'Trabajo interpretado del entrenador';
+      descriptionController.text = freeTextController.text.trim();
+
+      mainSetController.text = freeTextController.text.trim();
+
+      aiReasonController.text =
+          'Trabajo creado desde la descripción libre del entrenador.';
+
+      coachingNotesController.text =
+          'Mantener calidad técnica.\nControlar fatiga durante el bloque.\nAjustar si la técnica se deteriora.';
+
+      stopCriteriaController.text =
+          'Dolor.\nPérdida de técnica.\nFatiga que impida ejecutar correctamente.';
+
+      if (text.contains('subida') ||
+          text.contains('cuesta') ||
+          text.contains('fuerza')) {
+        type = TrainingBlockType.skating;
+        stimulus = TrainingStimulus.maxStrength;
+        energySystem = TrainingEnergySystem.anaerobicAlactic;
+        neuromuscularLoad = NeuromuscularLoad.high;
+        targetLoadControllerSafe(75);
+        zoneController.text = '4';
+        technicalCuesController.text =
+            'Posición baja estable.\nEmpuje potente y largo.\nNo perder alineación de rodilla y cadera.';
+      }
+
+      if (text.contains('100m') ||
+          text.contains('100 m') ||
+          text.contains('sprint') ||
+          text.contains('velocidad') ||
+          text.contains('salida')) {
+        type = TrainingBlockType.skating;
+        stimulus = TrainingStimulus.speed;
+        energySystem = TrainingEnergySystem.anaerobicAlactic;
+        neuromuscularLoad = NeuromuscularLoad.high;
+        zoneController.text = '4';
+        targetLoadControllerSafe(70);
+      }
+
+      if (text.contains('curva') || text.contains('curvas')) {
+        stimulus = TrainingStimulus.technical;
+        technicalCuesController.text =
+            'Mantener presión en curva.\nControlar postura.\nEvitar elevar el tronco.';
+      }
+
+      if (text.contains('fondo') ||
+          text.contains('resistencia') ||
+          text.contains('aerobico') ||
+          text.contains('aeróbico')) {
+        type = TrainingBlockType.aerobic;
+        stimulus = TrainingStimulus.aerobic;
+        energySystem = TrainingEnergySystem.aerobic;
+        neuromuscularLoad = NeuromuscularLoad.low;
+        zoneController.text = '2';
+        targetLoadControllerSafe(45);
+      }
+
+      if (text.contains('recuperacion') ||
+          text.contains('recuperación') ||
+          text.contains('suave')) {
+        type = TrainingBlockType.recovery;
+        stimulus = TrainingStimulus.recovery;
+        energySystem = TrainingEnergySystem.none;
+        neuromuscularLoad = NeuromuscularLoad.low;
+        recoveryFocused = true;
+        zoneController.text = '1';
+        targetLoadControllerSafe(15);
+      }
+
+      if (text.contains('2-3') || text.contains('2 a 3')) {
+        coachingNotesController.text =
+            '${coachingNotesController.text}\nRecuperar 2-3 minutos entre repeticiones.';
+      }
+
+      final repsMatch = RegExp(r'(\d+)\s*x\s*(\d+)').firstMatch(text);
+      if (repsMatch != null) {
+        final reps = int.tryParse(repsMatch.group(1) ?? '') ?? 0;
+        final meters = int.tryParse(repsMatch.group(2) ?? '') ?? 0;
+
+        if (reps > 0 && meters > 0) {
+          titleController.text = '${reps}x${meters}m interpretado';
+          kmController.text = ((reps * meters) / 1000).toStringAsFixed(1);
+          durationController.text = '45';
+        }
+      }
+    });
+  }
+
+  void targetLoadControllerSafe(int value) {
+    loadController.text = value.clamp(1, 100).toString();
   }
 
   void _save() {
@@ -261,6 +363,11 @@ class _UniversalBlockEditorScreenState
         padding: const EdgeInsets.all(16),
         children: [
           _HeroCard(isCreating: isCreating),
+          const SizedBox(height: 16),
+          _FreeTextInterpreterCard(
+            controller: freeTextController,
+            onInterpret: _interpretFreeText,
+          ),
           const SizedBox(height: 16),
           _PresetCard(onPreset: _applyPreset),
           const SizedBox(height: 16),
@@ -448,6 +555,64 @@ class _UniversalBlockEditorScreenState
             label: Text(isCreating ? 'Añadir trabajo' : 'Guardar cambios'),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _FreeTextInterpreterCard extends StatelessWidget {
+  final TextEditingController controller;
+  final VoidCallback onInterpret;
+
+  const _FreeTextInterpreterCard({
+    required this.controller,
+    required this.onInterpret,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: const Color(0xFF102A43),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Escribir entrenamiento como entrenador',
+              style: TextStyle(
+                fontSize: 19,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Ejemplo: 8x100m en subida haciendo fuerza con recuperación de 2-3 min.',
+              style: TextStyle(color: Colors.white70),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              maxLines: 4,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'Describe el entrenamiento',
+                labelStyle: TextStyle(color: Colors.white70),
+                hintText: '8x100m subida fuerza recuperación 2-3 min',
+                hintStyle: TextStyle(color: Colors.white38),
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: onInterpret,
+              icon: const Icon(Icons.auto_awesome),
+              label: const Text('Interpretar y llenar campos'),
+            ),
+          ],
+        ),
       ),
     );
   }

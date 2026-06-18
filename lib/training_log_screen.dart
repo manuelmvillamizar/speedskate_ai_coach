@@ -7,8 +7,26 @@ import 'daily_log_storage_service.dart';
 import 'daily_training_assignment.dart';
 import 'daily_training_assignment_service.dart';
 import 'training_log_learning_adapter.dart';
+import 'physiology/signals/speedskate_signal_interpreter.dart';
+import 'wearable_integration_service.dart';
 
 enum ComplianceLevel { full, partial, none }
+
+enum RealTrainingType {
+  planned,
+  skatingTechnique,
+  skatingSpeed,
+  skatingEndurance,
+  skatingStrength,
+  starts,
+  curves,
+  balance,
+  gymStrength,
+  plyometric,
+  recovery,
+  competition,
+  mixed,
+}
 
 enum SubjectiveFeel { excellent, good, normal, fatigued, veryFatigued }
 
@@ -52,6 +70,7 @@ class _TrainingLogScreenState extends State<TrainingLogScreen> {
   static const Color _softCardColor = Color(0xFF1E293B);
 
   ComplianceLevel _compliance = ComplianceLevel.full;
+  RealTrainingType _realTrainingType = RealTrainingType.planned;
   double _rpe = 5;
   SubjectiveFeel _subjectiveFeel = SubjectiveFeel.good;
   double _neuralFatigue = 5;
@@ -75,6 +94,9 @@ class _TrainingLogScreenState extends State<TrainingLogScreen> {
 
   final TextEditingController _observationsController = TextEditingController();
   bool _saving = false;
+  DateTime _selectedDate = DateTime.now();
+  dynamic _previewInterpretation;
+  bool _showPreview = false;
 
   @override
   void dispose() {
@@ -85,6 +107,7 @@ class _TrainingLogScreenState extends State<TrainingLogScreen> {
   void _clearForm() {
     setState(() {
       _compliance = ComplianceLevel.full;
+      _realTrainingType = RealTrainingType.planned;
       _rpe = 5;
       _subjectiveFeel = SubjectiveFeel.good;
       _neuralFatigue = 5;
@@ -103,6 +126,22 @@ class _TrainingLogScreenState extends State<TrainingLogScreen> {
     });
   }
 
+  void _interpretSession() {
+    final text = _observationsController.text.trim();
+
+    if (text.isEmpty) {
+      _showSnackbar('Describe primero lo que realmente hizo el atleta.');
+      return;
+    }
+
+    final interpretation = SpeedSkateSignalInterpreter.interpret(text);
+
+    setState(() {
+      _previewInterpretation = interpretation;
+      _showPreview = true;
+    });
+  }
+
   Future<void> _saveLog() async {
     if (_saving) return;
 
@@ -111,6 +150,7 @@ class _TrainingLogScreenState extends State<TrainingLogScreen> {
     try {
       final athleteContext = context.read<AthleteContextService>();
       final assignmentService = context.read<DailyTrainingAssignmentService>();
+      final wearableService = context.read<WearableIntegrationService>();
 
       final athlete = athleteContext.activeAthlete;
       final athleteId = athleteContext.activeAthleteId;
@@ -119,6 +159,17 @@ class _TrainingLogScreenState extends State<TrainingLogScreen> {
         _showSnackbar('No hay atleta activo.');
         return;
       }
+
+      final wearableForDate = wearableService
+          .historyForAthlete(athleteId)
+          .where(
+            (item) =>
+                item.date.year == _selectedDate.year &&
+                item.date.month == _selectedDate.month &&
+                item.date.day == _selectedDate.day,
+          )
+          .cast<WearableDailyData?>()
+          .firstWhere((item) => item != null, orElse: () => null);
 
       final assignment = assignmentService.todayAssignmentForAthlete(athleteId);
       final plannedDay = assignment?.trainingDay;
@@ -130,19 +181,53 @@ class _TrainingLogScreenState extends State<TrainingLogScreen> {
           ? ''
           : plannedDay.blocks.map((block) => block.title).join(' + ');
 
-      final performedLoad = _performedLoadFromCompliance(plannedLoad);
-      final performedMinutes = _performedMinutesFromCompliance(plannedMinutes);
-      final performedKm = _performedKmFromCompliance(plannedKm);
+      final wearableZoneMinutes =
+          (wearableForDate?.zone1Minutes ?? 0) +
+          (wearableForDate?.zone2Minutes ?? 0) +
+          (wearableForDate?.zone3Minutes ?? 0) +
+          (wearableForDate?.zone4Minutes ?? 0) +
+          (wearableForDate?.zone5Minutes ?? 0);
+
+      final wearableLooksAccumulated =
+          wearableForDate != null &&
+          wearableForDate.totalTrainingMinutes <= 0 &&
+          (wearableForDate.totalDistanceKm > 0 || wearableZoneMinutes > 0);
+
+      final wearableHasUsableTraining =
+          wearableForDate != null &&
+          !wearableLooksAccumulated &&
+          (wearableForDate.totalTrainingMinutes > 0 || wearableZoneMinutes > 0);
+
+      final performedLoad = wearableHasUsableTraining
+          ? wearableForDate.trainingLoad.round()
+          : _performedLoadFromCompliance(plannedLoad);
+
+      final performedMinutes = wearableHasUsableTraining
+          ? (wearableForDate.totalTrainingMinutes > 0
+                ? wearableForDate.totalTrainingMinutes
+                : wearableZoneMinutes)
+          : _performedMinutesFromCompliance(plannedMinutes);
+
+      final performedKm = wearableHasUsableTraining
+          ? wearableForDate.totalDistanceKm
+          : _performedKmFromCompliance(plannedKm);
+      final interpretationText = _observationsController.text.trim();
+
+      final interpretation = SpeedSkateSignalInterpreter.interpret(
+        interpretationText,
+      );
 
       final dailyLog = DailyAthleteLog(
         athleteId: athleteId,
-        date: DateTime.now(),
+        date: _selectedDate,
         plannedSessionType: plannedSessionType,
         plannedLoad: plannedLoad,
         plannedMinutes: plannedMinutes,
         plannedKm: plannedKm,
         completedAsPlanned: _compliance == ComplianceLevel.full,
-        performedSessionType: _complianceToText(_compliance),
+        performedSessionType: interpretationText.isEmpty
+            ? 'Actualización del entrenador'
+            : interpretationText,
         performedLoad: performedLoad,
         performedMinutes: performedMinutes,
         performedKm: performedKm,
@@ -156,10 +241,43 @@ class _TrainingLogScreenState extends State<TrainingLogScreen> {
             _recoveryStatus == RecoveryStatus.loaded ||
             _subjectiveFeel == SubjectiveFeel.veryFatigued,
         injuryRisk: _calculateInjuryRisk(),
-        aiNotes: _buildNotes(),
+
         aiDecision: _coachDecisionToText(_coachDecision),
         internalLoad: performedMinutes * _rpe,
         externalLoad: performedLoad.toDouble(),
+        zone1Minutes: wearableHasUsableTraining
+            ? wearableForDate.zone1Minutes
+            : 0,
+        zone2Minutes: wearableHasUsableTraining
+            ? wearableForDate.zone2Minutes
+            : 0,
+        zone3Minutes: wearableHasUsableTraining
+            ? wearableForDate.zone3Minutes
+            : 0,
+        zone4Minutes: wearableHasUsableTraining
+            ? wearableForDate.zone4Minutes
+            : 0,
+        zone5Minutes: wearableHasUsableTraining
+            ? wearableForDate.zone5Minutes
+            : 0,
+        averageHeartRate: wearableForDate?.averageHeartRate ?? 0,
+        maxHeartRate: wearableForDate?.maxHeartRate ?? 0,
+        sleepHours: wearableForDate?.sleepHours ?? 0,
+        hrv: wearableForDate?.hrv.toDouble() ?? 0,
+        restingHeartRate: wearableForDate?.restingHeartRate ?? 0,
+        stressLevel: wearableForDate?.stress.toDouble() ?? 0,
+
+        neuralStress: interpretation.neuralStress,
+        muscleStress: interpretation.muscleStress,
+        tendonStress: interpretation.tendonStress,
+        metabolicStress: interpretation.metabolicStress,
+        technicalStress: interpretation.technicalStress,
+        coordinationStress: interpretation.coordinationStress,
+        mechanicalStress: interpretation.mechanicalStress,
+        recoveryCost: interpretation.recoveryCost,
+        terrainStress: interpretation.curves,
+        intermittentStress: interpretation.starts,
+        aiNotes: '${_buildNotes()} · ${interpretation.summary}',
       );
 
       await DailyLogStorageService.saveLog(dailyLog);
@@ -368,6 +486,37 @@ class _TrainingLogScreenState extends State<TrainingLogScreen> {
     }
   }
 
+  String _realTrainingTypeToText(RealTrainingType value) {
+    switch (value) {
+      case RealTrainingType.planned:
+        return 'Según plan';
+      case RealTrainingType.skatingTechnique:
+        return 'Técnica sobre patines';
+      case RealTrainingType.skatingSpeed:
+        return 'Velocidad sobre patines';
+      case RealTrainingType.skatingEndurance:
+        return 'Resistencia sobre patines';
+      case RealTrainingType.skatingStrength:
+        return 'Fuerza sobre patines';
+      case RealTrainingType.starts:
+        return 'Salidas y aceleraciones';
+      case RealTrainingType.curves:
+        return 'Curvas';
+      case RealTrainingType.balance:
+        return 'Equilibrio y control';
+      case RealTrainingType.gymStrength:
+        return 'Fuerza en gimnasio';
+      case RealTrainingType.plyometric:
+        return 'Pliometría';
+      case RealTrainingType.recovery:
+        return 'Recuperación';
+      case RealTrainingType.competition:
+        return 'Competencia';
+      case RealTrainingType.mixed:
+        return 'Mixto';
+    }
+  }
+
   String _subjectiveFeelToText(SubjectiveFeel value) {
     switch (value) {
       case SubjectiveFeel.excellent:
@@ -486,6 +635,18 @@ class _TrainingLogScreenState extends State<TrainingLogScreen> {
     final assignment = context
         .watch<DailyTrainingAssignmentService>()
         .todayAssignmentForAthlete(athleteId);
+    final wearableService = context.watch<WearableIntegrationService>();
+
+    final wearableForSelectedDate = wearableService
+        .historyForAthlete(athleteId)
+        .where(
+          (item) =>
+              item.date.year == _selectedDate.year &&
+              item.date.month == _selectedDate.month &&
+              item.date.day == _selectedDate.day,
+        )
+        .cast<WearableDailyData?>()
+        .firstWhere((item) => item != null, orElse: () => null);
 
     return Scaffold(
       appBar: AppBar(
@@ -513,136 +674,55 @@ class _TrainingLogScreenState extends State<TrainingLogScreen> {
           const SizedBox(height: 12),
           _PlannedTrainingCard(assignment: assignment),
           const SizedBox(height: 12),
-          _section(
-            title: '1. ¿Qué tanto pudo completar?',
-            subtitle: 'Marca si el entrenamiento se hizo como estaba previsto.',
-            child: _dropdown<ComplianceLevel>(
-              value: _compliance,
-              items: ComplianceLevel.values,
-              labelBuilder: _complianceToText,
-              onChanged: (value) => setState(() => _compliance = value),
-            ),
+          _WearableDaySummaryCard(
+            selectedDate: _selectedDate,
+            wearable: wearableForSelectedDate,
+            onChangeDate: (newDate) {
+              setState(() {
+                _selectedDate = newDate;
+              });
+            },
           ),
+
+          const SizedBox(height: 12),
           _section(
-            title: '2. ¿Qué tan exigente fue?',
-            subtitle: 'Qué tan duro se sintió el entrenamiento para el atleta.',
-            child: _slider(
-              value: _rpe,
-              min: 1,
-              max: 10,
-              label: '${_rpe.round()} / 10',
-              onChanged: (value) => setState(() => _rpe = value),
-            ),
-          ),
-          _section(
-            title: '3. Sensación general',
-            subtitle: 'Cómo terminó el atleta después del entrenamiento.',
-            child: _dropdown<SubjectiveFeel>(
-              value: _subjectiveFeel,
-              items: SubjectiveFeel.values,
-              labelBuilder: _subjectiveFeelToText,
-              onChanged: (value) => setState(() => _subjectiveFeel = value),
-            ),
-          ),
-          _section(
-            title: '4. Sensación de piernas',
-            subtitle: 'Pesadez, lentitud, rigidez o poca reacción.',
-            child: _slider(
-              value: _neuralFatigue,
-              min: 1,
-              max: 10,
-              label: '${_neuralFatigue.round()} / 10',
-              onChanged: (value) => setState(() => _neuralFatigue = value),
-            ),
-          ),
-          _section(
-            title: '5. Dolor por zonas',
+            title: '¿Qué se hizo realmente?',
             subtitle:
-                'La app usa esto para proteger tendón, músculo y técnica.',
-            child: _painSliders(),
-          ),
-          _section(
-            title: '6. Calidad técnica',
-            subtitle: 'Si la técnica cae, la app aprende a ajustar el plan.',
-            child: _dropdown<TechnicalQuality>(
-              value: _technicalQuality,
-              items: TechnicalQuality.values,
-              labelBuilder: _technicalQualityToText,
-              onChanged: (value) => setState(() => _technicalQuality = value),
-            ),
-          ),
-          _section(
-            title: '7. Recuperación',
-            subtitle: 'Cómo quedó el atleta después de la sesión.',
-            child: _dropdown<RecoveryStatus>(
-              value: _recoveryStatus,
-              items: RecoveryStatus.values,
-              labelBuilder: _recoveryToText,
-              onChanged: (value) => setState(() => _recoveryStatus = value),
-            ),
-          ),
-          _section(
-            title: '8. Sueño percibido',
-            subtitle: 'Se combina con el dispositivo cuando haya datos.',
-            child: _dropdown<SleepPerception>(
-              value: _sleepPerception,
-              items: SleepPerception.values,
-              labelBuilder: _sleepToText,
-              onChanged: (value) => setState(() => _sleepPerception = value),
-            ),
-          ),
-          _section(
-            title: '9. Motivación',
-            subtitle: 'Ayuda a entender la respuesta emocional del atleta.',
-            child: _dropdown<MotivationLevel>(
-              value: _motivation,
-              items: MotivationLevel.values,
-              labelBuilder: _motivationToText,
-              onChanged: (value) => setState(() => _motivation = value),
-            ),
-          ),
-          _section(
-            title: '10. Incidencia',
-            subtitle: 'Viaje, enfermedad, estrés, dolor o cambio de sesión.',
-            child: _dropdown<IncidentType>(
-              value: _incident,
-              items: IncidentType.values,
-              labelBuilder: _incidentToText,
-              onChanged: (value) => setState(() => _incident = value),
-            ),
-          ),
-          _section(
-            title: '11. Decisión para el próximo día',
-            subtitle: 'La app aprende también del criterio del entrenador.',
-            child: _dropdown<CoachDecision>(
-              value: _coachDecision,
-              items: CoachDecision.values,
-              labelBuilder: _coachDecisionToText,
-              onChanged: (value) => setState(() => _coachDecision = value),
-            ),
-          ),
-          _section(
-            title: '12. Observaciones',
-            subtitle: 'Comentarios libres del entrenador.',
+                'Describe la sesión. La IA interpretará intensidad, técnica, fuerza, fatiga, recuperación y respuesta del atleta.',
             child: TextField(
               controller: _observationsController,
-              maxLines: 3,
+              maxLines: 8,
               style: const TextStyle(color: Colors.white),
               decoration: const InputDecoration(
-                hintText: 'Ej: rígido en curvas, excelente remate...',
+                hintText:
+                    'Ej: 20 min calentamiento. 8x100 m velocidad. 6x300 m ritmo competencia. 60 min bicicleta Z2. Terminó bien, algo cargada de piernas.',
                 border: OutlineInputBorder(),
               ),
             ),
           ),
           const SizedBox(height: 12),
+
           FilledButton.icon(
-            onPressed: _saving ? null : _saveLog,
-            icon: const Icon(Icons.save),
-            label: const Text('Guardar registro del día'),
+            onPressed: _saving ? null : _interpretSession,
+            icon: const Icon(Icons.psychology),
+            label: const Text('Interpretar con IA'),
             style: FilledButton.styleFrom(
               minimumSize: const Size(double.infinity, 52),
             ),
           ),
+
+          if (_showPreview && _previewInterpretation != null) ...[
+            const SizedBox(height: 12),
+            _AiInterpretationPreviewCard(
+              interpretation: _previewInterpretation,
+              onEdit: () {
+                setState(() {
+                  _showPreview = false;
+                });
+              },
+              onSave: _saving ? null : _saveLog,
+            ),
+          ],
         ],
       ),
     );
@@ -799,6 +879,132 @@ class _TrainingLogScreenState extends State<TrainingLogScreen> {
   }
 }
 
+class _AiInterpretationPreviewCard extends StatelessWidget {
+  final dynamic interpretation;
+  final VoidCallback onEdit;
+  final VoidCallback? onSave;
+
+  const _AiInterpretationPreviewCard({
+    required this.interpretation,
+    required this.onEdit,
+    required this.onSave,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: const Color(0xFF111827),
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Interpretación IA',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+                fontSize: 18,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              interpretation.summary,
+              style: const TextStyle(color: Colors.white70, height: 1.35),
+            ),
+            const SizedBox(height: 14),
+            _SignalRow(
+              label: 'Estrés neural',
+              value: interpretation.neuralStress,
+            ),
+            _SignalRow(
+              label: 'Estrés muscular',
+              value: interpretation.muscleStress,
+            ),
+            _SignalRow(
+              label: 'Estrés tendón',
+              value: interpretation.tendonStress,
+            ),
+            _SignalRow(
+              label: 'Estrés metabólico',
+              value: interpretation.metabolicStress,
+            ),
+            _SignalRow(
+              label: 'Estrés técnico',
+              value: interpretation.technicalStress,
+            ),
+            _SignalRow(
+              label: 'Coordinación',
+              value: interpretation.coordinationStress,
+            ),
+            _SignalRow(
+              label: 'Carga mecánica',
+              value: interpretation.mechanicalStress,
+            ),
+            _SignalRow(
+              label: 'Costo recuperación',
+              value: interpretation.recoveryCost,
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: onEdit,
+                    icon: const Icon(Icons.edit),
+                    label: const Text('Editar'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: onSave,
+                    icon: const Icon(Icons.save),
+                    label: const Text('Guardar día'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SignalRow extends StatelessWidget {
+  final String label;
+  final num value;
+
+  const _SignalRow({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    final rounded = value.round();
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(label, style: const TextStyle(color: Colors.white70)),
+          ),
+          Text(
+            '$rounded/100',
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _TrainingLogHeroCard extends StatelessWidget {
   final String athleteName;
   final int availabilityPreview;
@@ -883,6 +1089,124 @@ class _TrainingLogHeroCard extends StatelessWidget {
                 ),
               ],
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _WearableDaySummaryCard extends StatelessWidget {
+  final DateTime selectedDate;
+  final WearableDailyData? wearable;
+  final ValueChanged<DateTime> onChangeDate;
+
+  const _WearableDaySummaryCard({
+    required this.selectedDate,
+    required this.wearable,
+    required this.onChangeDate,
+  });
+
+  String _dateText(DateTime date) {
+    return '${date.day.toString().padLeft(2, '0')}/'
+        '${date.month.toString().padLeft(2, '0')}/'
+        '${date.year}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: Colors.blueGrey.withOpacity(0.16),
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Día que estás actualizando',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 17,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _dateText(selectedDate),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    final picked = await showDatePicker(
+                      context: context,
+                      initialDate: selectedDate,
+                      firstDate: DateTime.now().subtract(
+                        const Duration(days: 90),
+                      ),
+                      lastDate: DateTime.now().add(const Duration(days: 1)),
+                    );
+
+                    if (picked != null) {
+                      onChangeDate(picked);
+                    }
+                  },
+                  icon: const Icon(Icons.calendar_month),
+                  label: const Text('Cambiar'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (wearable == null)
+              const Text(
+                'No hay datos del reloj para esta fecha. El entrenador puede guardar una actualización manual.',
+                style: TextStyle(color: Colors.white70),
+              )
+            else
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _SmallChip(
+                    label: 'Km detectados',
+                    value: wearable!.totalDistanceKm.toStringAsFixed(1),
+                  ),
+                  _SmallChip(
+                    label: 'Min detectados',
+                    value:
+                        '${wearable!.totalTrainingMinutes > 0 ? wearable!.totalTrainingMinutes : wearable!.totalZoneMinutes}',
+                  ),
+                  _SmallChip(label: 'Fuente', value: wearable!.source),
+
+                  _SmallChip(
+                    label: 'Fecha wearable',
+                    value:
+                        '${wearable!.date.day}/${wearable!.date.month}/${wearable!.date.year}',
+                  ),
+                  _SmallChip(label: 'Z1', value: '${wearable!.zone1Minutes}'),
+                  _SmallChip(label: 'Z2', value: '${wearable!.zone2Minutes}'),
+                  _SmallChip(label: 'Z3', value: '${wearable!.zone3Minutes}'),
+                  _SmallChip(label: 'Z4', value: '${wearable!.zone4Minutes}'),
+                  _SmallChip(label: 'Z5', value: '${wearable!.zone5Minutes}'),
+                  _SmallChip(
+                    label: 'Sueño',
+                    value: wearable!.sleepHours.toStringAsFixed(1),
+                  ),
+                  _SmallChip(
+                    label: 'FC rep',
+                    value: '${wearable!.restingHeartRate}',
+                  ),
+                ],
+              ),
           ],
         ),
       ),

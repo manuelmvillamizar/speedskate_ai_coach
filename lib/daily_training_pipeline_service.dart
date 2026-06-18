@@ -25,6 +25,7 @@ import 'training_library/training_library_models.dart';
 import 'wearable_daily_log_mapper.dart';
 import 'physiology/strength_load_calculator.dart';
 import 'training_library/gym/gym_exercise_parser.dart';
+import 'coach_planning_preferences.dart';
 
 class DailyTrainingPipelineResult {
   final AthletePhysiologyProfile learnedProfile;
@@ -120,24 +121,83 @@ class DailyTrainingPipelineService {
         wearable: athleteContext.activeWearable!,
       );
 
-      await DailyLogStorageService.saveLog(wearableLog);
+      DailyAthleteLog? existingLogForDay;
 
-      logs.removeWhere((item) {
-        return item.date.year == wearableLog.date.year &&
+      for (final item in logs) {
+        final sameDay =
+            item.date.year == wearableLog.date.year &&
             item.date.month == wearableLog.date.month &&
             item.date.day == wearableLog.date.day;
+
+        if (sameDay) {
+          existingLogForDay = item;
+          break;
+        }
+      }
+
+      final mergedLog = existingLogForDay == null
+          ? wearableLog
+          : existingLogForDay.copyWith(
+              hrv: wearableLog.hrv,
+              restingHeartRate: wearableLog.restingHeartRate,
+              sleepHours: wearableLog.sleepHours,
+              stressLevel: wearableLog.stressLevel,
+              averageHeartRate: wearableLog.averageHeartRate,
+              maxHeartRate: wearableLog.maxHeartRate,
+
+              internalLoad: wearableLog.internalLoad,
+              externalLoad: wearableLog.externalLoad,
+
+              zone1Minutes: wearableLog.zone1Minutes,
+              zone2Minutes: wearableLog.zone2Minutes,
+              zone3Minutes: wearableLog.zone3Minutes,
+              zone4Minutes: wearableLog.zone4Minutes,
+              zone5Minutes: wearableLog.zone5Minutes,
+
+              neuralStress: wearableLog.neuralStress,
+              muscleStress: wearableLog.muscleStress,
+              tendonStress: wearableLog.tendonStress,
+              metabolicStress: wearableLog.metabolicStress,
+              cardiovascularStress: wearableLog.cardiovascularStress,
+              mechanicalStress: wearableLog.mechanicalStress,
+              technicalStress: wearableLog.technicalStress,
+              coordinationStress: wearableLog.coordinationStress,
+              terrainStress: wearableLog.terrainStress,
+              intermittentStress: wearableLog.intermittentStress,
+              recoveryCost: wearableLog.recoveryCost,
+
+              readiness: wearableLog.readiness,
+              overloadDetected:
+                  existingLogForDay.overloadDetected ||
+                  wearableLog.overloadDetected,
+              recoveryRecommended:
+                  existingLogForDay.recoveryRecommended ||
+                  wearableLog.recoveryRecommended,
+              injuryRisk: existingLogForDay.injuryRisk > wearableLog.injuryRisk
+                  ? existingLogForDay.injuryRisk
+                  : wearableLog.injuryRisk,
+              aiNotes:
+                  '${existingLogForDay.aiNotes} · Datos wearable integrados: ${wearableLog.aiNotes}',
+            );
+
+      await DailyLogStorageService.saveLog(mergedLog);
+
+      logs.removeWhere((item) {
+        return item.date.year == mergedLog.date.year &&
+            item.date.month == mergedLog.date.month &&
+            item.date.day == mergedLog.date.day;
       });
 
-      logs.add(wearableLog);
+      logs.add(mergedLog);
       logs.sort((a, b) => a.date.compareTo(b.date));
 
       learnedProfile = PhysiologyLearningEngine.processDailyMetrics(
         profile: learnedProfile,
         wearableData: athleteContext.activeWearable!,
-        sessionType: wearableLog.performedSessionType,
-        sessionLoad: wearableLog.performedLoad,
+        sessionType: mergedLog.performedSessionType,
+        sessionLoad: mergedLog.performedLoad,
         soreness: athleteContext.activeWearable!.soreness,
-        readiness: wearableLog.readiness,
+        readiness: mergedLog.readiness,
         dataQuality: athleteContext.activeDataQuality,
       );
 
@@ -147,7 +207,7 @@ class DailyTrainingPipelineService {
         memory: adaptiveMemory,
         wearableData: athleteContext.activeWearable!,
         previousLog: logs.length >= 2 ? logs[logs.length - 2] : null,
-        readiness: wearableLog.readiness,
+        readiness: mergedLog.readiness,
         soreness: athleteContext.activeWearable!.soreness,
         strengthLoadState: const StrengthLoadState(
           externalStrengthLoadKg: 0,
@@ -163,11 +223,20 @@ class DailyTrainingPipelineService {
       await AdaptiveResponseMemoryStorageService.saveMemory(adaptiveMemory);
     }
 
-    final dailyState = AthleteDailyStateEngine.build(
+    final rawDailyState = AthleteDailyStateEngine.build(
       athleteId: athlete.id,
       profile: learnedProfile,
       logs: logs,
       wearable: athleteContext.activeWearable,
+    );
+
+    final centralReadiness =
+        athleteContext.activeHybridReadiness?.score ??
+        athleteContext.activeReadinessScore;
+
+    final dailyState = rawDailyState.copyWith(
+      readiness: centralReadiness,
+      fatigueStatus: athleteContext.activeFatigueStatus,
     );
 
     final performanceContext = AthletePerformanceContext(
@@ -235,7 +304,7 @@ class DailyTrainingPipelineService {
       day: generatedDay,
       intervention: intervention,
     );
-
+    athleteContext.updateDailyState(dailyState);
     await DailyPipelineCacheService.saveSnapshot(
       athleteId: athlete.id,
       date: targetDate,
@@ -584,9 +653,14 @@ class DailyTrainingPipelineService {
     final week = _findWeekForDate(athlete: athlete, date: date);
 
     if (week == null || week.intelligentPlan == null) {
-      return IntegratedDayGeneratorEngine.generate(
+      final generated = IntegratedDayGeneratorEngine.generate(
         context: context,
         date: date,
+      );
+
+      return _applyCoachPreferencesToFallbackDay(
+        day: generated,
+        preferences: athlete.planningPreferences,
       );
     }
 
@@ -597,9 +671,14 @@ class DailyTrainingPipelineService {
     );
 
     if (weeklyDay.sessions.isEmpty) {
-      return IntegratedDayGeneratorEngine.generate(
+      final generated = IntegratedDayGeneratorEngine.generate(
         context: context,
         date: date,
+      );
+
+      return _applyCoachPreferencesToFallbackDay(
+        day: generated,
+        preferences: athlete.planningPreferences,
       );
     }
 
@@ -1435,6 +1514,116 @@ class DailyTrainingPipelineService {
     return StrengthLoadCalculator.calculate(
       exercises: parsed,
       athleteWeightKg: athleteWeightKg,
+    );
+  }
+
+  static IntegratedTrainingDay _applyCoachPreferencesToFallbackDay({
+    required IntegratedTrainingDay day,
+    required CoachPlanningPreferences preferences,
+  }) {
+    var blocks = [...day.blocks];
+
+    if (!preferences.allowCycling) {
+      blocks = blocks.where((block) {
+        return block.type != TrainingBlockType.cycling;
+      }).toList();
+    }
+
+    if (!preferences.allowDoubleSessions && blocks.length > 1) {
+      blocks = [blocks.first];
+    }
+
+    if (!preferences.prioritizeSpeed) {
+      blocks = blocks.map((block) {
+        if (block.stimulus != TrainingStimulus.speed &&
+            block.stimulus != TrainingStimulus.neuromuscular) {
+          return block;
+        }
+
+        return block.copyWith(
+          stimulus: TrainingStimulus.technical,
+          neuromuscularLoad: NeuromuscularLoad.moderate,
+          targetLoad: (block.targetLoad * 0.80).round().clamp(5, 100),
+          aiReason:
+              '${block.aiReason}\n\nPreferencia del entrenador: velocidad no prioritaria hoy.',
+        );
+      }).toList();
+    }
+
+    if (!preferences.prioritizeStrength) {
+      blocks = blocks.where((block) {
+        return block.type != TrainingBlockType.strength;
+      }).toList();
+    }
+
+    if (!preferences.prioritizeEndurance) {
+      blocks = blocks.map((block) {
+        if (block.stimulus != TrainingStimulus.aerobic) return block;
+
+        return block.copyWith(
+          durationMinutes: (block.durationMinutes * 0.75).round().clamp(10, 90),
+          km: block.km * 0.75,
+          targetLoad: (block.targetLoad * 0.75).round().clamp(5, 100),
+          aiReason:
+              '${block.aiReason}\n\nPreferencia del entrenador: resistencia no prioritaria hoy.',
+        );
+      }).toList();
+    }
+
+    if (preferences.planningStyle == CoachPlanningStyle.speedFocused) {
+      blocks = blocks.map((block) {
+        if (block.type != TrainingBlockType.skating) return block;
+
+        return block.copyWith(
+          stimulus: TrainingStimulus.speed,
+          energySystem: TrainingEnergySystem.anaerobicAlactic,
+          neuromuscularLoad: NeuromuscularLoad.moderate,
+          aiReason:
+              '${block.aiReason}\n\nEstilo del entrenador: prioridad velocidad.',
+        );
+      }).toList();
+    }
+
+    if (preferences.planningStyle == CoachPlanningStyle.technicalFocused) {
+      blocks = blocks.map((block) {
+        return block.copyWith(
+          stimulus: TrainingStimulus.technical,
+          targetLoad: (block.targetLoad * 0.85).round().clamp(5, 100),
+          aiReason:
+              '${block.aiReason}\n\nEstilo del entrenador: prioridad técnica.',
+        );
+      }).toList();
+    }
+
+    if (blocks.isEmpty) {
+      blocks = [
+        const DailyTrainingBlock(
+          type: TrainingBlockType.recovery,
+          moment: TrainingBlockMoment.morning,
+          title: 'Recuperación activa',
+          description:
+              'Sesión regenerativa creada porque las preferencias del entrenador filtraron los bloques disponibles.',
+          durationMinutes: 25,
+          km: 0,
+          targetLoad: 12,
+          targetHeartRateZone: 1,
+          recoveryFocused: true,
+          taperFocused: false,
+          aiReason:
+              'Preferencias del entrenador aplicadas al plan diario automático.',
+          stimulus: TrainingStimulus.recovery,
+          energySystem: TrainingEnergySystem.none,
+          neuromuscularLoad: NeuromuscularLoad.low,
+        ),
+      ];
+    }
+
+    return day.copyWith(
+      blocks: blocks,
+      aiSummary:
+          '${day.aiSummary}\n\nPreferencias del entrenador aplicadas al plan automático.',
+      aiRecommendation:
+          '${day.aiRecommendation}\n\nEl plan respeta la filosofía guardada del entrenador cuando no hay microciclo semanal disponible.',
     );
   }
 }

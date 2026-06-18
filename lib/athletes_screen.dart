@@ -188,6 +188,9 @@ class _AthleteFormDialog extends StatefulWidget {
 class _AthleteFormDialogState extends State<_AthleteFormDialog> {
   late final TextEditingController nameController;
   late final TextEditingController weightController;
+  late final TextEditingController heightController;
+  late final TextEditingController emailController;
+  late final TextEditingController whatsappController;
 
   DateTime? birthDate;
 
@@ -206,6 +209,16 @@ class _AthleteFormDialogState extends State<_AthleteFormDialog> {
     weightController = TextEditingController(
       text: athlete == null ? '65' : athlete.weightKg.toStringAsFixed(1),
     );
+    heightController = TextEditingController(
+      text: athlete == null
+          ? ''
+          : athlete.heightCm > 0
+          ? athlete.heightCm.toStringAsFixed(1)
+          : '',
+    );
+
+    emailController = TextEditingController(text: athlete?.email ?? '');
+    whatsappController = TextEditingController(text: athlete?.whatsapp ?? '');
 
     birthDate = athlete?.birthDate;
     type = athlete?.type ?? AthleteProgramType.sprinter;
@@ -216,6 +229,9 @@ class _AthleteFormDialogState extends State<_AthleteFormDialog> {
   void dispose() {
     nameController.dispose();
     weightController.dispose();
+    heightController.dispose();
+    emailController.dispose();
+    whatsappController.dispose();
     super.dispose();
   }
 
@@ -289,6 +305,11 @@ class _AthleteFormDialogState extends State<_AthleteFormDialog> {
     return double.tryParse(normalized) ?? 0;
   }
 
+  double _parseHeight(String value) {
+    final normalized = value.trim().replaceAll(',', '.');
+    return double.tryParse(normalized) ?? 0;
+  }
+
   Future<void> saveAthlete() async {
     if (saving) return;
 
@@ -298,6 +319,9 @@ class _AthleteFormDialogState extends State<_AthleteFormDialog> {
     final name = nameController.text.trim();
     final selectedBirthDate = birthDate;
     final weight = _parseWeight(weightController.text);
+    final height = _parseHeight(heightController.text);
+    final email = emailController.text.trim();
+    final whatsapp = whatsappController.text.trim();
 
     if (name.isEmpty) {
       messenger.showSnackBar(
@@ -316,6 +340,12 @@ class _AthleteFormDialogState extends State<_AthleteFormDialog> {
     if (weight <= 0) {
       messenger.showSnackBar(
         const SnackBar(content: Text('Escribe un peso válido en kg.')),
+      );
+      return;
+    }
+    if (height <= 0) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Escribe una estatura válida en cm.')),
       );
       return;
     }
@@ -341,6 +371,9 @@ class _AthleteFormDialogState extends State<_AthleteFormDialog> {
               level: level,
               age: AthleteProgramService.calculateAge(selectedBirthDate),
               weightKg: weight,
+              heightCm: height,
+              email: email,
+              whatsapp: whatsapp,
               birthDate: selectedBirthDate,
             )
             .timeout(const Duration(seconds: 8));
@@ -398,6 +431,9 @@ class _AthleteFormDialogState extends State<_AthleteFormDialog> {
         level: level,
         age: AthleteProgramService.calculateAge(selectedBirthDate),
         weightKg: weight,
+        heightCm: height,
+        email: email,
+        whatsapp: whatsapp,
         birthDate: selectedBirthDate,
       );
 
@@ -528,6 +564,33 @@ class _AthleteFormDialogState extends State<_AthleteFormDialog> {
                     'Weight kg',
                     'Gewicht kg',
                   ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: heightController,
+                enabled: !saving,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: const InputDecoration(labelText: 'Estatura cm'),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: emailController,
+                enabled: !saving,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(
+                  labelText: 'Correo del atleta',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: whatsappController,
+                enabled: !saving,
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(
+                  labelText: 'WhatsApp del atleta',
                 ),
               ),
               const SizedBox(height: 12),
