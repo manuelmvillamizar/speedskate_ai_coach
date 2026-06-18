@@ -56,7 +56,8 @@ class GarminService:
         print(f"   Fecha: {today}")
 
         try:
-            activities_raw = client.get_activities(0, 30)
+            # CAMBIO 2: Aumentado de 30 a 100 actividades
+            activities_raw = client.get_activities(0, 100)
             activities = []
 
             for activity in activities_raw:
@@ -76,8 +77,8 @@ class GarminService:
                     or ""
                 )
 
-                if str(start).startswith(today):
-                    activities.append(activity)
+                # CAMBIO 1: Eliminado el filtro de "solo hoy"
+                activities.append(activity)
 
             print(f"   ✅ Actividades obtenidas para {today}: {len(activities)}")
 
